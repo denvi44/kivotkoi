@@ -22,9 +22,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Node 22 : le 20 est en cours de dépréciation sur les runners GitHub.
+      # `cache: npm` et `npm ci` exigent tous deux un package-lock.json versionné.
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - run: npm ci

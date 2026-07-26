@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.cache/
+.DS_Store
+*.local
+.env
+.env.*
+!.env.example
+
+# public/donnees/ EST versionné : c'est la sortie de l'ingestion, et c'est ce
+# qui permet à Cloudflare Pages de servir un site correct même si l'open data
+# de l'Assemblée est indisponible au moment du déploiement.

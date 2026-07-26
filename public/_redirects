@@ -1,0 +1,3 @@
+# Application à page unique : toute route inconnue rend index.html.
+# Le 200 (et non 301/302) préserve l'URL dans la barre d'adresse.
+/*  /index.html  200

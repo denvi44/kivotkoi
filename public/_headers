@@ -1,0 +1,19 @@
+# En-têtes Cloudflare Pages.
+# Le site est entièrement statique : aucune origine tierce n'est nécessaire
+# hors les polices Google, seule dépendance externe restante.
+
+/*
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: geolocation=(), microphone=(), camera=(), interest-cohort=()
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'none'
+
+# Les fichiers de données changent à chaque ingestion et ne portent pas de
+# hash dans leur nom : ils doivent être revalidés, jamais figés.
+/donnees/*
+  Cache-Control: public, max-age=0, must-revalidate
+
+# Les assets produits par Vite portent un hash : immuables.
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable

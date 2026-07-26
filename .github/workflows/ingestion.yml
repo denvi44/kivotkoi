@@ -1,0 +1,70 @@
+name: Ingestion des scrutins
+
+# L'open data de l'Assemblée est republié une fois par jour vers 03h–06h UTC.
+# On passe après, et on laisse la possibilité de déclencher à la main.
+on:
+  schedule:
+    - cron: "20 7 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ingestion
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  ingerer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      # Les tests d'invariant tournent AVANT l'ingestion : si partition.mjs est
+      # cassé, on ne veut pas découvrir le problème dans les données publiées.
+      - name: Tests d'invariant
+        run: npm test
+
+      - name: Ingestion
+        env:
+          SITE_URL: ${{ vars.SITE_URL }}
+          SITE_CONTACT: ${{ vars.SITE_CONTACT }}
+        run: npm run ingest
+
+      # Vérification de non-régression : un index qui perd des scrutins signale
+      # une ingestion partielle. On refuse de commiter plutôt que d'amputer le
+      # site en ligne.
+      - name: Contrôle de non-régression
+        run: |
+          set -euo pipefail
+          nouveau=$(node -p "require('./public/donnees/index.json').scrutins.length")
+          ancien=$(git show HEAD:public/donnees/index.json 2>/dev/null \
+                   | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).scrutins.length" \
+                   || echo 0)
+          echo "scrutins : $ancien -> $nouveau"
+          if [ "$nouveau" -lt "$ancien" ]; then
+            echo "::error::Régression : $ancien scrutins en ligne, $nouveau produits."
+            exit 1
+          fi
+
+      - name: Commit si changement
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/donnees
+          if git diff --cached --quiet; then
+            echo "Aucun changement — rien à publier."
+            exit 0
+          fi
+          git commit -m "données : ingestion du $(date -u +%Y-%m-%d)"
+          git push

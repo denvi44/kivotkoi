@@ -35,6 +35,9 @@ import {
 } from "./partition.mjs";
 import { profil, creerAccumulateur } from "./deputes.mjs";
 import { analyser, cleTexte } from "../src/intitule.js";
+import {
+  construireHistorique, fusionnerHistoriques, deduireAbsents,
+} from "./absents.mjs";
 
 const run = promisify(execFile);
 
@@ -62,6 +65,11 @@ const JEUX = {
   scrutins: `${RACINE}/${LEGISLATURE}/loi/scrutins/Scrutins.json.zip`,
   acteurs: `${RACINE}/${LEGISLATURE}/amo/deputes_actifs_mandats_actifs_organes/` +
            `AMO10_deputes_actifs_mandats_actifs_organes.json.zip`,
+  /* Historique complet depuis 1997. Indispensable pour nommer les absents :
+     AMO10 ignore les députés remplacés en cours de législature, ce qui rend
+     l'effectif des groupes systématiquement trop court. */
+  historique: `${RACINE}/${LEGISLATURE}/amo/tous_acteurs_mandats_organes_xi_legislature/` +
+              `AMO30_tous_acteurs_tous_mandats_tous_organes_historique.json.zip`,
 };
 
 const CONTACT = process.env.SITE_CONTACT || "contact non renseigné";
@@ -429,6 +437,20 @@ async function main() {
     if (p) profils.set(p.id, p);
   }
   const accumulateur = creerAccumulateur();
+
+  /* Historique des appartenances, pour nommer les absents. AMO30 est plus
+     complet mais republié moins souvent qu'AMO10 : on fusionne les deux. Si le
+     téléchargement échoue, on continue sans — les absents resteront anonymes,
+     ce qui est le comportement d'avant, pas une régression. */
+  let historique = construireHistorique(fichiersActeur);
+  try {
+    const dossierHisto = await recupererArchive("historique", JEUX.historique);
+    const fichiersHisto = await lireDossier(dossierHisto, "acteur");
+    historique = fusionnerHistoriques(historique, construireHistorique(fichiersHisto));
+    console.log(`${historique.size} députés dans l'historique des appartenances`);
+  } catch (e) {
+    console.warn(`historique indisponible (${e.message}) — absents non nommés`);
+  }
   console.log(
     `${acteurs.size} députés · ${organes.size} groupes politiques ` +
     `(${[...organes.values()].map((o) => o.id).sort().join(", ")})`
@@ -446,7 +468,9 @@ async function main() {
   for (const o of organes.values()) nomsGroupes.set(o.id, o.nom);
 
   let ignores = 0;
-  let dernier = null; // composition du scrutin le plus récent
+  let dernier = null;      // composition du scrutin le plus récent
+  let demontres = 0;       // couples groupe×scrutin où les absents sont nommés
+  let nonDemontres = 0;
 
   for (const [i, fichier] of fichiers.entries()) {
     let etiquette = path.basename(fichier);
@@ -496,12 +520,28 @@ async function main() {
                          votants nommés. C'est la seule trace des absents.
            Les confondre à l'affichage donnait une colonne « aucun » sous un
            en-tête annonçant « 32 absents ». */
+        /* L'Assemblée ne nomme pas les absents, mais on peut les démontrer :
+           effectif du groupe à cette date, moins les votants. La déduction
+           n'est retenue que si elle survit à deux contrôles — voir
+           scripts/absents.mjs. Sinon, seul le nombre est publié. */
+        const nommes = deduireAbsents({
+          acronyme: gid,
+          date: s.date,
+          effectifAnnonce: membres,
+          votants: CASES.flatMap((c) => listes[c]),
+          historique,
+          organes,
+        });
+        if (nommes.absents) demontres++; else nonDemontres++;
+
         groupes[gid] = {
           ...listes,
           membres,
           absents: Math.max(0, membres - votants),
+          absentsNommes: nommes.absents ?? undefined,
           ligne: s.lignes[gid] ?? null,
         };
+        for (const id of nommes.absents ?? []) noms.set(id, acteurs.get(id) ?? id);
       }
 
       accumulateur.ajouter(
@@ -645,6 +685,15 @@ async function main() {
     for (const [d, n] of [...deduits].sort((a, b) => b[1] - a[1])) {
       console.log(`  ${d} — ${n} scrutin(s)`);
     }
+  }
+
+  const totalCouples = demontres + nonDemontres;
+  if (totalCouples > 0) {
+    console.log(
+      `\nAbsents nommés : ${demontres}/${totalCouples} couples groupe×scrutin ` +
+      `(${((100 * demontres) / totalCouples).toFixed(1)} %) — ` +
+      `les autres restent anonymes, faute de démonstration`
+    );
   }
 
   console.log(

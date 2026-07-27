@@ -100,7 +100,12 @@ function useVue(scrutin, noms, complet) {
         curseur++;
       };
       for (const c of CASES) for (const id of g.cases[c] ?? []) poser(c, id);
-      for (let k = 0; k < g.absents; k++) poser("absent", null);
+
+      /* Les absents démontrés portent un nom ; les autres restent anonymes.
+         Les deux coexistent dans un même scrutin, selon que la reconstitution
+         de l'effectif du groupe a pu être vérifiée. */
+      const absentsNommes = g.cases.absentsNommes ?? [];
+      for (let k = 0; k < g.absents; k++) poser("absent", absentsNommes[k] ?? null);
     }
 
     /* Garde : chaque député dans exactement une case, clé sur l'identifiant.
@@ -121,7 +126,13 @@ function useVue(scrutin, noms, complet) {
       : scrutin.anomalies || null;
 
     const absents = ordonnes.reduce((t, g) => t + g.absents, 0);
-    return { groupes: ordonnes, sieges, total, nommes, absents, alerte, inconnus, nom };
+    const absentsNommes = ordonnes.reduce(
+      (t, g) => t + Math.min(g.absents, (g.cases.absentsNommes ?? []).length), 0
+    );
+    return {
+      groupes: ordonnes, sieges, total, nommes, absents, absentsNommes,
+      alerte, inconnus, nom,
+    };
   }, [scrutin, noms, complet]);
 }
 
@@ -461,11 +472,13 @@ export default function App() {
                     {survol.s.nom ? (
                       <>
                         <b style={{ fontWeight: 500 }}>{survol.s.nom}</b> · {survol.s.groupe} ·{" "}
-                        {survol.s.vote === "nonVotant" ? "non votant" : survol.s.vote}
+                        {survol.s.vote === "nonVotant" ? "non votant"
+                          : survol.s.vote === "absent" ? "absent"
+                          : survol.s.vote}
                         <span style={{ color: T.dust }}> · cliquer pour la fiche</span>
                       </>
                     ) : (
-                      <>{survol.s.groupe} · absent — <i>non nommé par la source</i></>
+                      <>{survol.s.groupe} · absent — <i>identité non reconstituable</i></>
                     )}
                   </div>
                 )}
@@ -485,9 +498,20 @@ export default function App() {
 
                 {complet && vue.absents > 0 && (
                   <p style={{ color: T.dust, fontSize: 11.5, marginTop: 12, lineHeight: 1.5 }}>
-                    {vue.absents} sièges gris représentent les députés absents. L'Assemblée
-                    publie leur nombre par groupe, jamais leur identité&nbsp;: ces sièges sont
-                    donc exacts en quantité, mais anonymes.
+                    {vue.absents} sièges gris représentent les députés absents.
+                    {vue.absentsNommes === vue.absents ? (
+                      <> L'Assemblée n'en publie que le nombre&nbsp;; leur identité est
+                      reconstituée à partir de l'effectif de chaque groupe à cette date,
+                      moins les votants — un calcul retenu seulement lorsque son résultat
+                      concorde avec l'effectif publié.</>
+                    ) : vue.absentsNommes > 0 ? (
+                      <> {vue.absentsNommes} d'entre eux ont pu être identifiés par
+                      recoupement avec l'effectif de leur groupe&nbsp;; les autres restent
+                      anonymes, la reconstitution n'ayant pas pu être vérifiée.</>
+                    ) : (
+                      <> L'Assemblée publie leur nombre par groupe, jamais leur
+                      identité&nbsp;: ces sièges sont exacts en quantité, mais anonymes.</>
+                    )}
                   </p>
                 )}
               </>
@@ -576,21 +600,36 @@ export default function App() {
 
                       /* Les absents ne sont pas une liste vide : ce sont des
                          députés bien réels que l'Assemblée dénombre sans les
-                         nommer. Afficher « aucun » sous un en-tête annonçant
-                         « 32 absents » se contredisait. */
+                         nommer. Quand l'ingestion a pu les démontrer — effectif
+                         du groupe à cette date moins les votants, sous double
+                         contrôle — on les liste. Sinon, seul le nombre. */
                       if (k === "absent") {
                         const n = g.cases.absents ?? 0;
+                        const nommes = filtre(g.cases.absentsNommes);
                         return (
                           <div className="col" key={k}>
                             <div className="colh">
                               <span className="k" style={{ color: couleur }}>{label}</span>
                               <span className="n">{n}</span>
                             </div>
-                            <p className="vide">
-                              {n === 0
-                                ? "aucun"
-                                : "non nommés par l'Assemblée, qui n'en publie que le nombre"}
-                            </p>
+                            {n === 0 ? (
+                              <p className="vide">aucun</p>
+                            ) : nommes.length > 0 ? (
+                              <ul className="liste" tabIndex={nommes.length > 8 ? 0 : -1}
+                                  aria-label={`Absents — groupe ${g.id}`}>
+                                {nommes.map((id) => (
+                                  <li key={id}>
+                                    <button className="lien-depute" onClick={() => setDepute(id)}>
+                                      {vue.nom(id)}
+                                    </button>
+                                  </li>
+                                ))}
+                              </ul>
+                            ) : (
+                              <p className="vide">
+                                non nommés par l'Assemblée, qui n'en publie que le nombre
+                              </p>
+                            )}
                           </div>
                         );
                       }

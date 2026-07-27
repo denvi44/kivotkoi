@@ -191,7 +191,7 @@ function Message({ titre, children }) {
   return (
     <div className="chambre">
       <div className="wrap" style={{ paddingTop: "12vh", maxWidth: 620 }}>
-        <div className="eyebrow">Chambre</div>
+        <div className="eyebrow">kivotkoi</div>
         <h1 className="disp" style={{ fontSize: 34, margin: "12px 0 14px" }}>{titre}</h1>
         <div style={{ color: T.dust, fontSize: 15, lineHeight: 1.55 }}>{children}</div>
       </div>

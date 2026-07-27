@@ -75,7 +75,10 @@
 .marque:hover .logo circle:nth-child(odd){opacity:.62}
 
 .mot{display:flex;flex-direction:column;gap:3px;min-width:0}
-.mot-nom{font-size:27px;letter-spacing:-.02em;line-height:1}
+.mot-nom{font-size:29px;letter-spacing:-.025em;line-height:1;text-transform:lowercase}
+/* « ki·vot·koi » : la syllabe centrale porte le sens, on l'allège plutôt que
+   de la souligner. Le mot reste un seul bloc, sans séparateur. */
+.mot-nom .pivot{color:var(--brass)}
 .mot-sous{font-family:'IBM Plex Mono',monospace;font-size:10px;
   letter-spacing:.13em;text-transform:uppercase;color:var(--dust)}
 

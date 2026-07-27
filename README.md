@@ -1,4 +1,4 @@
-# Chambre
+# kivotkoi
 
 Visualisation des scrutins publics de l'Assemblée nationale : pour chaque
 scrutin, la position de vote de chaque député, colorée par groupe dans

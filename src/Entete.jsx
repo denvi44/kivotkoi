@@ -48,7 +48,7 @@ const GEOMETRIE = sieges();
 export default function Entete() {
   return (
     <header className="site-entete">
-      <a className="marque" href="/" aria-label="Chambre — accueil">
+      <a className="marque" href="/" aria-label="kivotkoi — accueil">
         <svg className="logo" viewBox="0 0 64 36" role="img"
              aria-label="Hémicycle stylisé : trois rangs de sièges en arc">
           {GEOMETRIE.map((s) => {
@@ -67,9 +67,17 @@ export default function Entete() {
                 strokeLinecap="round" />
         </svg>
 
+        {/* Le nom se lit « qui vote quoi ». Les trois syllabes sont marquées
+            par la graisse plutôt que par un séparateur : la coupure reste
+            perceptible sans mutiler le mot, qui doit s'écrire et se retenir
+            d'un bloc. */}
         <span className="mot">
-          <span className="mot-nom disp">Chambre</span>
-          <span className="mot-sous">Les votes de l'Assemblée nationale</span>
+          <span className="mot-nom disp" aria-label="kivotkoi">
+            <span aria-hidden="true">ki</span>
+            <span aria-hidden="true" className="pivot">vot</span>
+            <span aria-hidden="true">koi</span>
+          </span>
+          <span className="mot-sous">Qui vote quoi à l'Assemblée nationale</span>
         </span>
       </a>
 

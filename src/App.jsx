@@ -219,6 +219,14 @@ export default function App() {
   const liste = index.donnees?.scrutins ?? [];
   const calendrier = useMemo(() => grouper(liste), [liste]);
 
+  /* Dénomination complète des groupes. Les fichiers de scrutin ne portent que
+     l'acronyme ; le libellé vit dans l'index, qui est chargé de toute façon. */
+  const nomsGroupes = useMemo(() => {
+    const m = new Map();
+    for (const g of index.donnees?.groupes ?? []) m.set(g.id, g.nom);
+    return m;
+  }, [index.donnees]);
+
   const filtres = useMemo(() => {
     const t = recherche.trim().toLowerCase();
     if (!t) return liste;
@@ -312,14 +320,32 @@ export default function App() {
               {exprimes > 0 && <> · majorité absolue&nbsp;: {Math.floor(exprimes / 2) + 1}</>}
             </div>
             {/* Le site dit comment on a voté, jamais ce que dit le texte.
-                Le renvoi vers la source évite d'avoir à le résumer. */}
-            <a className="lien-source"
-               href={lienScrutin("an", meta.numero, index.donnees.legislature)}
-               target="_blank" rel="noopener noreferrer">
-              Le texte et le dossier législatif
-              <span className="sr-only"> — sur assemblee-nationale.fr, nouvelle fenêtre</span>
-              <span aria-hidden="true"> ↗</span>
-            </a>
+                Les renvois vers la source évitent d'avoir à le résumer. */}
+            <div className="liens-sources">
+              {meta.liens?.texte && (
+                <a className="lien-source" href={meta.liens.texte}
+                   target="_blank" rel="noopener noreferrer">
+                  Lire le texte
+                  <span className="sr-only"> de loi sur assemblee-nationale.fr, nouvelle fenêtre</span>
+                  <span aria-hidden="true"> ↗</span>
+                </a>
+              )}
+              {meta.liens?.dossier && (
+                <a className="lien-source" href={meta.liens.dossier}
+                   target="_blank" rel="noopener noreferrer">
+                  Dossier législatif
+                  <span className="sr-only"> sur assemblee-nationale.fr, nouvelle fenêtre</span>
+                  <span aria-hidden="true"> ↗</span>
+                </a>
+              )}
+              <a className="lien-source"
+                 href={lienScrutin("an", meta.numero, index.donnees.legislature)}
+                 target="_blank" rel="noopener noreferrer">
+                Le scrutin
+                <span className="sr-only"> sur assemblee-nationale.fr, nouvelle fenêtre</span>
+                <span aria-hidden="true"> ↗</span>
+              </a>
+            </div>
           </div>
         </header>
 
@@ -531,7 +557,20 @@ export default function App() {
                   <button key={g.id} data-on={on ? "1" : "0"} aria-pressed={on}
                           onClick={() => setActif(on ? null : g.id)}>
                     <span className="pastille" style={{ background: couleurDe(g.id) }} />
-                    <span className="id">{g.id}</span>
+                    <span className="id">
+                      {/* L'acronyme ne se coupe jamais : « LFI-NFP » se
+                          scindait sur son trait d'union et désalignait la
+                          colonne. */}
+                      <span className="acr">{g.id}</span>
+                      {/* Dénomination complète, en retrait. Tronquée faute de
+                          place — l'attribut title la donne en entier, et la
+                          section d'analyse plus bas l'affiche sans coupe. */}
+                      {nomsGroupes.get(g.id) && (
+                        <span className="nom-complet" title={nomsGroupes.get(g.id)}>
+                          {nomsGroupes.get(g.id)}
+                        </span>
+                      )}
+                    </span>
                     <span className="mono eff">{g.sieges}</span>
                     <span className="bar">
                       <span style={{ flexGrow: n("pour") || 0.001, background: T.pour }} />
@@ -589,6 +628,9 @@ export default function App() {
                   <div className="grptitre">
                     <span className="p" style={{ background: couleurDe(g.id) }} />
                     <h3>{g.id}</h3>
+                    {nomsGroupes.get(g.id) && (
+                      <span className="grp-nom">{nomsGroupes.get(g.id)}</span>
+                    )}
                     <span className="ligne mono">
                       {g.cases.membres} membre{g.cases.membres > 1 ? "s" : ""}
                       {g.cases.absents > 0 && <> · {g.cases.absents} absent{g.cases.absents > 1 ? "s" : ""}</>}

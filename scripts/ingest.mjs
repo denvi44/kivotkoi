@@ -38,6 +38,7 @@ import { analyser, cleTexte } from "../src/intitule.js";
 import {
   construireHistorique, fusionnerHistoriques, deduireAbsents,
 } from "./absents.mjs";
+import { relierDossiers, liensDossier } from "./dossiers.mjs";
 
 const run = promisify(execFile);
 
@@ -70,6 +71,10 @@ const JEUX = {
      l'effectif des groupes systématiquement trop court. */
   historique: `${RACINE}/${LEGISLATURE}/amo/tous_acteurs_mandats_organes_xi_legislature/` +
               `AMO30_tous_acteurs_tous_mandats_tous_organes_historique.json.zip`,
+  /* Seule source reliant un scrutin au texte de loi qu'il vise : les actes
+     législatifs portent un champ `voteRef`. Les fichiers de scrutin, eux, ne
+     référencent aucun dossier. */
+  dossiers: `${RACINE}/${LEGISLATURE}/loi/dossiers_legislatifs/Dossiers_Legislatifs.json.zip`,
 };
 
 const CONTACT = process.env.SITE_CONTACT || "contact non renseigné";
@@ -614,6 +619,37 @@ async function main() {
   }
 
   resume.sort((a, b) => b.numero - a.numero);
+
+  /* Rattachement au dossier législatif. Fait après la boucle : il faut la clé
+     de texte de chaque scrutin, produite pendant. En cas d'échec du
+     téléchargement, les liens manquent — le site reste correct sans eux. */
+  let liensParCle = new Map();
+  try {
+    const dossierDL = await recupererArchive("dossiers", JEUX.dossiers);
+    const fichiersDL = await lireDossier(dossierDL, "dossierParlementaire");
+    const cleParScrutin = new Map(resume.map((s) => [s.numero, s.dossier]));
+    const { parCle, directs, collisions } =
+      relierDossiers(fichiersDL, cleParScrutin, LEGISLATURE);
+
+    for (const [cle, d] of parCle) {
+      liensParCle.set(cle, { ...liensDossier(d, Number(LEGISLATURE)), titre: d.titre });
+    }
+    const relies = resume.filter((s) => liensParCle.has(s.dossier)).length;
+    console.log(
+      `\nDossiers législatifs : ${directs} scrutin(s) cité(s) directement, ` +
+      `propagés à ${relies}/${resume.length} (${((100 * relies) / resume.length).toFixed(1)} %)` +
+      (collisions.length ? ` · ${collisions.length} clé(s) ambiguë(s) écartée(s)` : "")
+    );
+  } catch (e) {
+    console.warn(`dossiers législatifs indisponibles (${e.message}) — sans liens`);
+  }
+
+  /* Le lien vit dans l'index, pas dans chaque fichier de scrutin : une même
+     entrée servirait des centaines de fois. */
+  for (const s of resume) {
+    const l = liensParCle.get(s.dossier);
+    if (l) s.liens = l;
+  }
 
   /* La composition vient du scrutin le plus récent, pas d'un cumul sur la
      législature : additionner les maxima par groupe recensait 847 sièges pour

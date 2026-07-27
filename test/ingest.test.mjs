@@ -6,27 +6,25 @@ import {
 } from "../scripts/ingest.mjs";
 import { partitionner, compter } from "../scripts/partition.mjs";
 
-/* Échantillon reproduisant la forme du jeu AMO10 de l'Assemblée nationale.
-   Les identifiants sont fictifs ; seule la STRUCTURE compte ici. */
-const ACTEURS_AN = {
-  export: {
-    acteurs: {
-      acteur: [
-        { uid: { "#text": "PA1" }, etatCivil: { ident: { prenom: "Camille", nom: "Garonne" } } },
-        { uid: { "#text": "PA2" }, etatCivil: { ident: { prenom: "Julien", nom: "Vézère" } } },
-        { uid: { "#text": "PA3" }, etatCivil: { ident: { prenom: "Awa", nom: "Lozère" } } },
-        { uid: { "#text": "PA4" }, etatCivil: { ident: { prenom: "Nadia", nom: "Ardèche" } } },
-      ],
-    },
-    organes: {
-      organe: [
-        { uid: { "#text": "PO1" }, codeType: "GP", libelleAbrev: "EPR", libelle: "Ensemble pour la République" },
-        { uid: { "#text": "PO2" }, codeType: "GP", libelleAbrev: "RN", libelle: "Rassemblement National" },
-        { uid: { "#text": "PO9" }, codeType: "COMPER", libelleAbrev: "CFIN", libelle: "Commission des finances" },
-      ],
-    },
-  },
-};
+/* Échantillon reproduisant la forme RÉELLE du jeu AMO10, relevée le
+   26 juillet 2026 dans l'archive décompressée :
+     - un fichier par entité, chacun avec une clé racine `acteur` ou `organe` ;
+     - `uid` des acteurs emballé dans { "#text": … }, celui des organes nu ;
+     - les groupes politiques portent codeType « GP ».
+   Les identifiants sont fictifs ; seule la structure compte. */
+const FICHIERS_ACTEUR = [
+  { acteur: { uid: { "@xsi:type": "IdActeur_type", "#text": "PA1" }, etatCivil: { ident: { civ: "Mme", prenom: "Camille", nom: "Garonne" } } } },
+  { acteur: { uid: { "#text": "PA2" }, etatCivil: { ident: { prenom: "Julien", nom: "Vézère" } } } },
+  { acteur: { uid: { "#text": "PA3" }, etatCivil: { ident: { prenom: "Awa", nom: "Lozère" } } } },
+  { acteur: { uid: { "#text": "PA4" }, etatCivil: { ident: { prenom: "Nadia", nom: "Ardèche" } } } },
+];
+
+const FICHIERS_ORGANE = [
+  { organe: { uid: "PO1", codeType: "GP", libelleAbrev: "EPR", libelle: "Ensemble pour la République", viMoDe: { dateFin: null } } },
+  { organe: { uid: "PO2", codeType: "GP", libelleAbrev: "RN", libelle: "Rassemblement National", viMoDe: { dateFin: null } } },
+  { organe: { uid: "PO9", codeType: "COMPER", libelleAbrev: "CFIN", libelle: "Commission des finances" } },
+  { organe: { uid: "PO7", codeType: "CIRCONSCRIPTION", libelle: "Gironde, 1ère circonscription" } },
+];
 
 /* Le groupe RN n'a qu'un seul « votant » : l'AN le sérialise alors comme un
    objet nu et non comme un tableau. C'est le piège classique de ce format. */
@@ -85,27 +83,44 @@ test("texte déballe les scalaires emballés par l'AN", () => {
 });
 
 test("seuls les organes de type GP deviennent des groupes politiques", () => {
-  const organes = construireOrganes(ACTEURS_AN);
+  const organes = construireOrganes(FICHIERS_ORGANE);
   assert.equal(organes.size, 2, "la commission des finances est exclue");
   assert.deepEqual(organes.get("PO1"), { id: "EPR", nom: "Ensemble pour la République" });
 });
 
-test("un jeu acteurs sans organe GP échoue en le disant", () => {
+test("un référentiel sans aucun organe GP échoue en le disant", () => {
   assert.throws(
-    () => construireOrganes({ export: { organes: { organe: [{ codeType: "COMPER" }] } } }),
+    () => construireOrganes([{ organe: { uid: "PO9", codeType: "COMPER" } }]),
     /codeType/
   );
 });
 
+/* Régression : la première version lisait UN fichier en le prenant pour un
+   index global. L'archive contient en fait un fichier par entité. */
+test("les organes sont lus fichier par fichier, pas depuis un index global", () => {
+  const organes = construireOrganes(FICHIERS_ORGANE);
+  assert.equal(organes.get("PO2").id, "RN");
+  assert.equal(organes.get("PO7"), undefined, "une circonscription n'est pas un groupe");
+});
+
+test("un acronyme manquant retombe sur libelleAbrege puis sur l'uid", () => {
+  const organes = construireOrganes([
+    { organe: { uid: "PO3", codeType: "GP", libelleAbrege: "ABR", libelle: "Avec abrege" } },
+    { organe: { uid: "PO4", codeType: "GP", libelle: "Sans rien" } },
+  ]);
+  assert.equal(organes.get("PO3").id, "ABR");
+  assert.equal(organes.get("PO4").id, "PO4");
+});
+
 test("les acteurs sont indexés par uid, avec prénom et nom recomposés", () => {
-  const acteurs = construireActeurs(ACTEURS_AN);
+  const acteurs = construireActeurs(FICHIERS_ACTEUR);
   assert.equal(acteurs.size, 4);
   assert.equal(acteurs.get("PA1"), "Camille Garonne");
 });
 
 test("un scrutin AN se normalise en votes exploitables", () => {
-  const organes = construireOrganes(ACTEURS_AN);
-  const acteurs = construireActeurs(ACTEURS_AN);
+  const organes = construireOrganes(FICHIERS_ORGANE);
+  const acteurs = construireActeurs(FICHIERS_ACTEUR);
   const s = normaliserScrutin(SCRUTIN_AN, organes, acteurs);
 
   assert.equal(s.numero, 42);
@@ -118,8 +133,8 @@ test("un scrutin AN se normalise en votes exploitables", () => {
 });
 
 test("la chaîne complète normalisation → partition conserve l'invariant", () => {
-  const organes = construireOrganes(ACTEURS_AN);
-  const acteurs = construireActeurs(ACTEURS_AN);
+  const organes = construireOrganes(FICHIERS_ORGANE);
+  const acteurs = construireActeurs(FICHIERS_ACTEUR);
   const s = normaliserScrutin(SCRUTIN_AN, organes, acteurs);
   const { partition, total, ok } = partitionner(s.votes);
 
@@ -130,8 +145,8 @@ test("la chaîne complète normalisation → partition conserve l'invariant", ()
 });
 
 test("un champ manquant est signalé avec les clés réellement présentes", () => {
-  const organes = construireOrganes(ACTEURS_AN);
-  const acteurs = construireActeurs(ACTEURS_AN);
+  const organes = construireOrganes(FICHIERS_ORGANE);
+  const acteurs = construireActeurs(FICHIERS_ACTEUR);
 
   assert.throws(
     () => normaliserScrutin({ scrutin: { numero: "1", titre: "x" } }, organes, acteurs),
@@ -140,8 +155,8 @@ test("un champ manquant est signalé avec les clés réellement présentes", () 
 });
 
 test("un groupe inconnu du référentiel garde son identifiant brut, sans planter", () => {
-  const organes = construireOrganes(ACTEURS_AN);
-  const acteurs = construireActeurs(ACTEURS_AN);
+  const organes = construireOrganes(FICHIERS_ORGANE);
+  const acteurs = construireActeurs(FICHIERS_ACTEUR);
   const modifie = structuredClone(SCRUTIN_AN);
   modifie.scrutin.ventilationVotes.organe.groupes.groupe[1].organeRef = "PO404";
 
@@ -150,8 +165,8 @@ test("un groupe inconnu du référentiel garde son identifiant brut, sans plante
 });
 
 test("un scrutin sans aucun décompte nominatif est refusé, pas publié vide", () => {
-  const organes = construireOrganes(ACTEURS_AN);
-  const acteurs = construireActeurs(ACTEURS_AN);
+  const organes = construireOrganes(FICHIERS_ORGANE);
+  const acteurs = construireActeurs(FICHIERS_ACTEUR);
   const modifie = structuredClone(SCRUTIN_AN);
   for (const g of modifie.scrutin.ventilationVotes.organe.groupes.groupe) g.vote = {};
 

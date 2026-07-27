@@ -13,23 +13,31 @@
  * groupe se constitue avant qu'on ait tranché de sa place.
  */
 
+/* Acronymes tels que l'Assemblée les publie (champ `libelleAbrev` des organes
+   de codeType « GP »), relevés le 26 juillet 2026 dans AMO10. Attention : ce
+   ne sont pas les sigles d'usage courant. « LFI-NFP » et non « LFI »,
+   « ECOS » et non « ECO », « UDDPLR » et non « UDR ». Un écart ici ne casse
+   rien mais fait tomber le groupe en fin de rang, en gris. */
 export const ORDRE = [
-  "GDR", "LFI", "ECO", "SOC", "LIOT", "DEM", "EPR", "HOR", "DR", "UDR", "RN", "NI",
+  "GDR", "LFI-NFP", "ECOS", "SOC", "LIOT", "DEM", "EPR", "HOR", "DR", "UDDPLR", "RN", "NI",
 ];
 
 export const COULEURS = {
   GDR: "#B0173B",
-  LFI: "#CC2443",
-  ECO: "#3E9E48",
+  "LFI-NFP": "#CC2443",
+  ECOS: "#3E9E48",
   SOC: "#E5476B",
   LIOT: "#9C8CB5",
   DEM: "#E8A33D",
   EPR: "#F0D040",
   HOR: "#7FC5E8",
   DR: "#2E6DB4",
-  UDR: "#1B4E8C",
+  UDDPLR: "#1B4E8C",
   RN: "#1C2E6E",
-  NI: "#6B6259",
+  /* NI décalé du gris vers un kaki : « non inscrit » n'est pas une identité
+     partisane à préserver, et l'ancien #6B6259 se confondait avec les sièges
+     d'absents (ΔE 5,8, sous le seuil de confusion de 20). Désormais 22,8. */
+  NI: "#A08B5E",
 };
 
 /** Couleur de repli pour un groupe inconnu du fichier ci-dessus. */

@@ -99,9 +99,16 @@ npm run ingest -- --inspecter    # imprime la forme réelle d'un scrutin
 
 ### Fichiers produits par l'ingestion
 
-`public/donnees/index.json` — liste des scrutins, groupes et effectifs.
-`public/donnees/scrutin-N.json` — un fichier par scrutin, avec la liste
-nominative par groupe et par case.
+| Fichier | Contenu | Poids |
+| --- | --- | --- |
+| `index.json` | numéro, date, titre, sort de chaque scrutin | ~1,4 Mo |
+| `deputes.json` | identifiant → nom, y compris les députés remplacés | ~18 Ko |
+| `scrutin-N.json` | par groupe : listes d'identifiants par case, effectif, absents, ligne | ~3,4 Ko |
+| `depute/PA###.json` | parti, mandats, participation, accord avec la ligne | ~10 Ko |
+
+Les fichiers de scrutin ne portent que des identifiants ; les noms vivent
+uniquement dans `deputes.json`. Les répéter à chaque scrutin quadruplait la
+sortie — 72 Mo au lieu de 18 sur douze mois.
 
 Ces fichiers sont **versionnés dans git**. Ce n'est pas un oubli : c'est ce qui
 permet au site de rester correct si l'open data de l'Assemblée est indisponible
@@ -159,16 +166,68 @@ CSP.
 
 ---
 
-## Points connus
+## Ce que la source ne dit pas
 
-- **Fraîcheur des scrutins.** L'archive `Scrutins.json.zip` n'est pas republiée
-  tous les jours par l'Assemblée. Le pied de page affiche la date d'ingestion,
-  pas la date du dernier scrutin — les deux peuvent diverger de plusieurs
-  semaines sans que rien ne soit cassé.
-- **Ordre des groupes.** L'open data ne dit pas où placer un groupe sur l'axe
-  gauche–droite : c'est un choix éditorial, assumé dans `src/groupes.js`. Un
-  groupe absent de cette liste est placé en fin de rang, en gris, et signalé
-  dans l'interface.
+Trois limites viennent des données elles-mêmes, pas du code. Elles sont
+assumées et visibles dans l'interface plutôt que masquées.
+
+- **Les absents ne sont pas nommés.** L'Assemblée ne publie que les députés
+  ayant pris part au vote. Un scrutin ordinaire en nomme environ 135 sur 577.
+  Seul `nombreMembresGroupe` trahit l'effectif réel, d'où des sièges gris
+  anonymes — exacts en nombre, sans identité. La bascule *votants seuls*
+  affiche la donnée brute pour qui préfère.
+- **Des références de groupe sont cassées.** Les groupes dissous manquent au
+  référentiel des mandats actifs (`PO847173`, 3 041 scrutins), et `PO0`
+  apparaît dans 14 scrutins à la place du RN. Plutôt que de coder ces cas en
+  dur, `resoudreGroupe()` interroge les députés listés : si 70 % au moins
+  partagent un même groupe actuel, c'est celui-là. La déduction est signalée
+  dans le fichier produit (`groupesDeduits`), jamais présentée comme une
+  lecture directe.
+- **L'ordre gauche–droite est éditorial.** L'open data ne dit pas où placer un
+  groupe sur cet axe. Le choix vit dans `src/groupes.js` ; un groupe absent de
+  la liste est placé en fin de rang, en gris, et signalé dans l'interface.
+
+### Le piège des taux de participation
+
+Il n'y a **pas de taux d'absentéisme** dans ce projet, et c'est délibéré.
+
+Sur douze mois, 99 % des scrutins sont des *scrutins publics ordinaires*, dont
+la médiane est de **133 votants sur 577**. Ces scrutins se tiennent avec les
+députés présents en séance ; ne pas y figurer est la norme. Un taux calculé sur
+l'ensemble afficherait environ 77 % d'« absence » pour à peu près tout le
+monde — exact, et faux de sens.
+
+`scripts/deputes.mjs` ventile donc la participation par type de scrutin, met en
+avant les *solennels* (43 sur la période, médiane 530 votants) où la présence
+est attendue, et affiche systématiquement la médiane du groupe en regard. Aucun
+pourcentage n'apparaît sans son dénominateur.
+
+Les **motions de censure** sont comptées à part, jamais comme une présence :
+l'article 49 de la Constitution ne fait recenser que les voix favorables, si
+bien que `contre` vaut 0 dans les treize motions de la période. S'abstenir,
+s'opposer et être absent y sont indiscernables. Voter une censure est une
+position politique.
+
+L'**accord avec la ligne du groupe**, en revanche, repose sur une donnée
+publiée : `positionMajoritaire` est fournie par l'Assemblée pour chaque groupe
+et chaque scrutin. Elle n'est pas reconstituée à partir des décomptes. Les
+« non votants » sont exclus du calcul — ne pas prendre part n'est ni un accord
+ni un désaccord.
+
+Attention aux acronymes : ce sont ceux du champ `libelleAbrev`, pas ceux de
+l'usage courant. `LFI-NFP` et non `LFI`, `ECOS` et non `ECO`, `UDDPLR` et non
+`UDR`. Une erreur ici ne casse rien — elle déclasse silencieusement le groupe
+en gris. Le test `tokens.test.mjs` verrouille les douze valeurs.
+
+## Autres points connus
+
+- **Fenêtre glissante de 12 mois** (~5 400 scrutins, 20 Mo). La législature
+  entière en compte 8 400 pour 86 Mo, recommittés à chaque ingestion.
+  `npm run ingest -- --mois 0` lève la limite.
+- **Fraîcheur.** L'archive `Scrutins.json.zip` n'est pas republiée tous les
+  jours. Le pied de page affiche la date d'ingestion, pas celle du dernier
+  scrutin — les deux peuvent diverger de plusieurs semaines sans que rien ne
+  soit cassé.
 - **Pas de PWA.** Le service worker de la première version mettait en cache des
   routes `/api/` disparues. Rien ne le remplace pour l'instant.
 

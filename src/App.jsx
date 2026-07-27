@@ -1,7 +1,11 @@
-import React, { useMemo, useState, useEffect } from "react";
+import React, { useMemo, useState, useEffect, useRef } from "react";
 import { T } from "./tokens.js";
 import { ordonner, couleurDe } from "./groupes.js";
 import { construireSieges } from "./hemicycle.js";
+import ListeVirtuelle from "./ListeVirtuelle.jsx";
+import FicheDepute from "./FicheDepute.jsx";
+import Calendrier from "./Calendrier.jsx";
+import { grouper, decouper } from "./dates.js";
 
 /* ============================================================
    CHAMBRE — visualisation des scrutins publics de l'Assemblée.
@@ -16,15 +20,22 @@ import { construireSieges } from "./hemicycle.js";
 
 const CASES = ["pour", "contre", "abstention", "nonVotant", "absent"];
 
+/* Couleurs de TEXTE, pas les jetons d'aplat : --contre et --absent tombent
+   respectivement à 3,91 et 1,75 sur ce fond, sous le seuil de 4,5:1. */
 const COLONNES = [
   ["Pour", "pour", T.pour],
-  ["Contre", "contre", T.contre],
+  ["Contre", "contre", T.contreTxt],
   ["Abstention", "abstention", T.abst],
-  ["Non votants", "nonVotant", T.absent],
-  ["Absents", "absent", T.absent],
+  ["Non votants", "nonVotant", T.absentTxt],
+  ["Absents", "absent", T.absentTxt],
 ];
 
 const BASE = `${import.meta.env.BASE_URL}donnees`;
+
+/* Définie au niveau du module : passée en ligne, son identité changerait à
+   chaque rendu et invaliderait le cache de la liste virtualisée. */
+const cleScrutin = (s) => s.numero;
+
 
 /* ---------- chargement ---------- */
 function useJson(url) {
@@ -49,16 +60,26 @@ function useJson(url) {
   return etat;
 }
 
-/* ---------- mise en forme d'un scrutin pour l'hémicycle ---------- */
-function useVue(scrutin) {
+/* ---------- mise en forme d'un scrutin pour l'hémicycle ----------
+   `complet` : inclure les absents. L'Assemblée ne publie pas leur identité,
+   seulement l'effectif du groupe (`nombreMembresGroupe`). On les représente
+   donc par des sièges anonymes, en nombre exact. Sans eux, un scrutin
+   ordinaire n'affiche qu'environ 135 sièges sur 577 — visuellement on croit
+   voir l'hémicycle entier alors qu'on ne voit que les votants. */
+function useVue(scrutin, noms, complet) {
   return useMemo(() => {
     if (!scrutin?.groupes) return null;
 
-    const brut = Object.entries(scrutin.groupes).map(([id, cases]) => ({
-      id,
-      cases,
-      sieges: CASES.reduce((t, c) => t + (cases[c]?.length ?? 0), 0),
-    }));
+    const nom = (id) => noms?.[id] ?? id;
+
+    const brut = Object.entries(scrutin.groupes).map(([id, g]) => {
+      const votants = CASES.reduce((t, c) => t + (g[c]?.length ?? 0), 0);
+      return {
+        id, cases: g, votants,
+        absents: complet ? (g.absents ?? 0) : 0,
+        sieges: votants + (complet ? (g.absents ?? 0) : 0),
+      };
+    });
     const { ordonnes, inconnus } = ordonner(brut);
 
     const total = ordonnes.reduce((t, g) => t + g.sieges, 0);
@@ -67,17 +88,18 @@ function useVue(scrutin) {
     const sieges = [];
     let curseur = 0;
     for (const g of ordonnes) {
-      for (const c of CASES) {
-        for (const d of g.cases[c] ?? []) {
-          const geo = geometrie[curseur];
-          if (!geo) break;
-          sieges.push({
-            i: curseur, ...geo,
-            groupe: g.id, couleur: couleurDe(g.id), vote: c, nom: d.nom,
-          });
-          curseur++;
-        }
-      }
+      const poser = (vote, id) => {
+        const geo = geometrie[curseur];
+        if (!geo) return;
+        sieges.push({
+          i: curseur, ...geo,
+          groupe: g.id, couleur: couleurDe(g.id), vote,
+          id: id ?? null, nom: id ? nom(id) : null,
+        });
+        curseur++;
+      };
+      for (const c of CASES) for (const id of g.cases[c] ?? []) poser(c, id);
+      for (let k = 0; k < g.absents; k++) poser("absent", null);
     }
 
     /* Garde : chaque député dans exactement une case, clé sur l'identifiant.
@@ -86,31 +108,38 @@ function useVue(scrutin) {
     const vu = new Map();
     for (const g of ordonnes) {
       for (const c of CASES) {
-        for (const d of g.cases[c] ?? []) vu.set(d.id, (vu.get(d.id) ?? 0) + 1);
+        for (const id of g.cases[c] ?? []) vu.set(id, (vu.get(id) ?? 0) + 1);
       }
     }
     const enDouble = [...vu.values()].filter((n) => n > 1).length;
+    const nommes = ordonnes.reduce((t, g) => t + g.votants, 0);
 
     const alerte =
       enDouble > 0 ? `${enDouble} député(s) présent(s) dans plusieurs cases`
-      : vu.size !== total ? `${Math.abs(total - vu.size)} député(s) mal comptabilisé(s)`
+      : vu.size !== nommes ? `${Math.abs(nommes - vu.size)} député(s) mal comptabilisé(s)`
       : scrutin.anomalies || null;
 
-    return { groupes: ordonnes, sieges, total, alerte, inconnus };
-  }, [scrutin]);
+    const absents = ordonnes.reduce((t, g) => t + g.absents, 0);
+    return { groupes: ordonnes, sieges, total, nommes, absents, alerte, inconnus, nom };
+  }, [scrutin, noms, complet]);
 }
 
 /* =========================== hémicycle =========================== */
-function Hemicycle({ sieges, total, mode, actif, onSurvol, onChoisirGroupe }) {
+function Hemicycle({ sieges, total, mode, actif, onSurvol, onChoisirGroupe, onChoisirDepute,
+                    resume }) {
   const W = 1000;
   const cx = W / 2;
   const R = 448;
   const cy = R + 34;
   const H = cy + 22;
 
+  /* Les 577 sièges ne sont pas dans l'ordre de tabulation : ce serait 577
+     arrêts avant d'atteindre le reste de la page. L'équivalent accessible
+     n'est pas un contournement mais la section « Analyse du scrutin », qui
+     liste chaque député sous forme de bouton menant à la même fiche.
+     Le graphique porte donc un résumé chiffré et renvoie vers elle. */
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="hemi" role="img"
-         aria-label={`Répartition des ${total} sièges par groupe et par vote`}>
+    <svg viewBox={`0 0 ${W} ${H}`} className="hemi" role="img" aria-label={resume}>
       <path d={`M ${cx - R * 0.30} ${cy + 6} L ${cx + R * 0.30} ${cy + 6}`}
             stroke={T.line} strokeWidth="2" />
       {sieges.map((s) => {
@@ -122,21 +151,22 @@ function Hemicycle({ sieges, total, mode, actif, onSurvol, onChoisirGroupe }) {
           : T[s.vote === "abstention" ? "abst" : horsVote ? "absent" : s.vote];
         const estompe = actif && actif !== s.groupe;
 
+        /* Encodage redondant : la forme porte le vote dans les DEUX modes, et
+           pas seulement la couleur. Sans cela, un daltonien ne distinguerait
+           « pour » de « contre » en mode par vote (WCAG 1.4.1). */
         let fill = base, stroke = "none", sw = 0, op = 1;
-        if (mode === "groupe") {
-          if (s.vote === "contre") { fill = "transparent"; stroke = base; sw = 1.9; }
-          else if (s.vote === "abstention") { op = 0.34; }
-          else if (horsVote) { fill = T.absent; op = 0.75; }
-        }
+        if (s.vote === "contre") { fill = "transparent"; stroke = base; sw = 1.9; }
+        else if (s.vote === "abstention") { op = 0.34; }
+        else if (horsVote) { fill = T.absent; op = 0.75; }
 
         return (
           <circle key={s.i} cx={x} cy={y} r={horsVote ? 4.2 : 5.4}
                   fill={fill} stroke={stroke} strokeWidth={sw}
-                  className="siege"
+                  className={s.nom ? "siege" : "siege anonyme"}
                   style={{ opacity: estompe ? 0.12 : op, transitionDelay: `${(s.i / total) * 260}ms` }}
                   onMouseEnter={() => onSurvol({ s, x: (x / W) * 100, y: (y / H) * 100 })}
                   onMouseLeave={() => onSurvol(null)}
-                  onClick={() => onChoisirGroupe(s.groupe)} />
+                  onClick={() => (s.id ? onChoisirDepute(s.id) : onChoisirGroupe(s.groupe))} />
         );
       })}
     </svg>
@@ -159,20 +189,53 @@ function Message({ titre, children }) {
 /* =========================== application =========================== */
 export default function App() {
   const index = useJson(`${BASE}/index.json`);
+  const deputes = useJson(`${BASE}/deputes.json`);
   const [numero, setNumero] = useState(null);
   const [mode, setMode] = useState("groupe");
+  const [complet, setComplet] = useState(true);
   const [actif, setActif] = useState(null);
   const [survol, setSurvol] = useState(null);
   const [q, setQ] = useState("");
+  const [recherche, setRecherche] = useState("");
+  const [depute, setDepute] = useState(null);   // identifiant PA######
+  const [jour, setJour] = useState(null);       // date AAAA-MM-JJ sélectionnée
+  const [vueMois, setVueMois] = useState(null); // { annee, mois } affiché
+  const railRef = useRef(null);
+
+  const fiche = useJson(depute ? `${BASE}/depute/${depute}.json` : null);
 
   const liste = index.donnees?.scrutins ?? [];
+  const calendrier = useMemo(() => grouper(liste), [liste]);
 
+  const filtres = useMemo(() => {
+    const t = recherche.trim().toLowerCase();
+    if (!t) return liste;
+    return liste.filter(
+      (s) => String(s.numero).includes(t) || s.titre.toLowerCase().includes(t)
+    );
+  }, [liste, recherche]);
+
+  /* Point de départ : le scrutin le plus récent, et le mois qui le contient. */
   useEffect(() => {
-    if (numero === null && liste.length) setNumero(liste[0].numero);
+    if (numero !== null || !liste.length) return;
+    const dernier = liste[0];
+    setNumero(dernier.numero);
+    setJour(dernier.date);
+    const { annee, mois } = decouper(dernier.date);
+    setVueMois({ annee, mois });
   }, [liste, numero]);
 
+  const duJour = jour ? (calendrier.parJour.get(jour) ?? []) : [];
+  const enRecherche = recherche.trim().length > 0;
+
+  const choisirJour = (iso) => {
+    setJour(iso);
+    const s = calendrier.parJour.get(iso);
+    if (s?.length) { setNumero(s[0].numero); setActif(null); }
+  };
+
   const scrutin = useJson(numero === null ? null : `${BASE}/scrutin-${numero}.json`);
-  const vue = useVue(scrutin.donnees);
+  const vue = useVue(scrutin.donnees, deputes.donnees, complet);
 
   if (index.statut === "chargement") {
     return <Message titre="Chargement…">Lecture de l'index des scrutins.</Message>;
@@ -202,6 +265,11 @@ export default function App() {
 
   return (
     <div className="chambre">
+      {depute && <FicheDepute etat={fiche} onFermer={() => setDepute(null)} />}
+
+      <a className="evitement" href="#hemicycle">Aller à l'hémicycle</a>
+      <a className="evitement" href="#analyse">Aller à l'analyse du scrutin</a>
+
       <div className="wrap">
         <header className="hdr">
           <div>
@@ -223,21 +291,79 @@ export default function App() {
 
         <div className="grille">
           {/* ---- rail des scrutins ---- */}
-          <nav className="rail" aria-label="Scrutins récents">
-            <div className="eyebrow" style={{ padding: "0 12px 10px" }}>
-              Scrutins · {liste.length}
+          <nav className="rail" aria-label="Scrutins" ref={railRef}>
+            <div className="tete">
+              <h2 className="eyebrow">
+                {enRecherche
+                  ? `${filtres.length} résultat${filtres.length > 1 ? "s" : ""} sur ${liste.length}`
+                  : `Scrutins · ${liste.length}`}
+              </h2>
+              <input className="champ mini" type="search" value={recherche}
+                     placeholder="chercher : titre ou n°…"
+                     aria-label="Chercher un scrutin par titre ou numéro"
+                     onChange={(e) => setRecherche(e.target.value)} />
             </div>
-            {liste.slice(0, 60).map((s) => (
-              <button key={s.numero} data-on={s.numero === numero ? "1" : "0"}
-                      onClick={() => { setNumero(s.numero); setActif(null); }}>
-                <div className="mono n">n° {s.numero} · {s.date}</div>
-                <div className="t">{s.titre}</div>
-              </button>
-            ))}
+
+            {/* Deux modes exclusifs : le calendrier pour parcourir le temps, la
+                liste pour retrouver un texte précis. Afficher les deux ferait
+                du rail une colonne de 5 000 lignes, ce qu'on cherche à éviter. */}
+            {enRecherche ? (
+              <>
+                <ListeVirtuelle
+                  items={filtres}
+                  conteneurRef={railRef}
+                  cle={cleScrutin}
+                  hauteurEstimee={78}
+                  rendu={(s) => (
+                    <button className="scrutin" data-on={s.numero === numero ? "1" : "0"}
+                            onClick={() => {
+                              setNumero(s.numero); setActif(null); setJour(s.date);
+                              const d = decouper(s.date);
+                              setVueMois({ annee: d.annee, mois: d.mois });
+                            }}>
+                      <div className="mono n">n° {s.numero} · {s.date}</div>
+                      <div className="t">{s.titre}</div>
+                    </button>
+                  )}
+                />
+                {filtres.length === 0 && (
+                  <p className="fin">Aucun scrutin ne correspond.</p>
+                )}
+              </>
+            ) : vueMois && (
+              <>
+                <Calendrier
+                  parJour={calendrier.parJour}
+                  moisDisponibles={calendrier.moisDisponibles}
+                  max={calendrier.max}
+                  annee={vueMois.annee}
+                  mois={vueMois.mois}
+                  jourActif={jour}
+                  onChoisirJour={choisirJour}
+                  onChangerMois={setVueMois}
+                />
+
+                <div className="liste-scrutins">
+                  {duJour.map((s) => (
+                    <button key={s.numero} className="scrutin"
+                            data-on={s.numero === numero ? "1" : "0"}
+                            onClick={() => { setNumero(s.numero); setActif(null); }}>
+                      <div className="mono n">n° {s.numero}</div>
+                      <div className="t">{s.titre}</div>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
           </nav>
 
           {/* ---- hémicycle ---- */}
-          <section className="scene" style={{ position: "relative" }}>
+          <section className="scene" id="hemicycle" tabIndex={-1}
+                   style={{ position: "relative" }}
+                   aria-labelledby="titre-hemicycle">
+            <h2 className="sr-only" id="titre-hemicycle">
+              Hémicycle · répartition des votes
+            </h2>
             <div className="toolbar">
               <div className="legende">
                 {mode === "groupe" ? (
@@ -250,15 +376,27 @@ export default function App() {
                 ) : (
                   <>
                     <span className="lg"><span className="sw" style={{ background: T.pour }} />Pour</span>
-                    <span className="lg"><span className="sw" style={{ background: T.contre }} />Contre</span>
-                    <span className="lg"><span className="sw" style={{ background: T.abst }} />Abstention</span>
+                    <span className="lg"><span className="sw" style={{ background: "transparent", border: `2px solid ${T.contre}` }} />Contre</span>
+                    <span className="lg"><span className="sw" style={{ background: T.abst, opacity: .34 }} />Abstention</span>
                     <span className="lg"><span className="sw" style={{ background: T.absent }} />Non votant</span>
                   </>
                 )}
               </div>
-              <div className="seg" role="group" aria-label="Coloration des sièges">
-                <button data-on={mode === "groupe" ? "1" : "0"} onClick={() => setMode("groupe")}>par groupe</button>
-                <button data-on={mode === "vote" ? "1" : "0"} onClick={() => setMode("vote")}>par vote</button>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <div className="seg" role="group" aria-label="Étendue affichée">
+                  <button data-on={complet ? "1" : "0"} onClick={() => setComplet(true)}
+                          title="577 sièges : votants nommés + absents anonymes">
+                    hémicycle complet
+                  </button>
+                  <button data-on={complet ? "0" : "1"} onClick={() => setComplet(false)}
+                          title="Uniquement les députés que la source nomme">
+                    votants seuls
+                  </button>
+                </div>
+                <div className="seg" role="group" aria-label="Coloration des sièges">
+                  <button data-on={mode === "groupe" ? "1" : "0"} onClick={() => setMode("groupe")}>par groupe</button>
+                  <button data-on={mode === "vote" ? "1" : "0"} onClick={() => setMode("vote")}>par vote</button>
+                </div>
               </div>
             </div>
 
@@ -278,12 +416,32 @@ export default function App() {
             {vue && c && (
               <>
                 <Hemicycle sieges={vue.sieges} total={vue.total} mode={mode} actif={actif}
-                           onSurvol={setSurvol} onChoisirGroupe={setActif} />
+                           onSurvol={setSurvol} onChoisirGroupe={setActif}
+                           onChoisirDepute={setDepute}
+                           resume={
+                             `Hémicycle de ${vue.total} sièges. ` +
+                             `${c.pour} pour, ${c.contre} contre, ${c.abstention} abstention, ` +
+                             `${c.nonVotant + c.absent + vue.absents} n'ont pas pris part au vote. ` +
+                             `Le détail par député figure dans la section « Analyse du scrutin ».`
+                           } />
+
+                <p className="sr-only">
+                  Ce graphique est une représentation visuelle. La position de
+                  chaque député, avec accès à sa fiche, est disponible sous
+                  forme de liste dans la section « Analyse du scrutin ».
+                </p>
 
                 {survol && (
                   <div className="tip" style={{ left: `${survol.x}%`, top: `${survol.y}%` }}>
-                    <b style={{ fontWeight: 500 }}>{survol.s.nom}</b> · {survol.s.groupe} ·{" "}
-                    {survol.s.vote === "nonVotant" ? "non votant" : survol.s.vote}
+                    {survol.s.nom ? (
+                      <>
+                        <b style={{ fontWeight: 500 }}>{survol.s.nom}</b> · {survol.s.groupe} ·{" "}
+                        {survol.s.vote === "nonVotant" ? "non votant" : survol.s.vote}
+                        <span style={{ color: T.dust }}> · cliquer pour la fiche</span>
+                      </>
+                    ) : (
+                      <>{survol.s.groupe} · absent — <i>non nommé par la source</i></>
+                    )}
                   </div>
                 )}
 
@@ -291,21 +449,31 @@ export default function App() {
                   <div style={{ flexGrow: c.pour, background: T.pour }} />
                   <div style={{ flexGrow: c.contre, background: T.contre }} />
                   <div style={{ flexGrow: c.abstention, background: T.abst }} />
-                  <div style={{ flexGrow: c.nonVotant + c.absent, background: T.absent }} />
+                  <div style={{ flexGrow: c.nonVotant + c.absent + vue.absents, background: T.absent }} />
                 </div>
                 <div className="tallyleg mono">
                   <span><b>{c.pour}</b> pour</span>
                   <span><b>{c.contre}</b> contre</span>
                   <span><b>{c.abstention}</b> abstention</span>
-                  <span><b>{c.nonVotant + c.absent}</b> non votants</span>
+                  <span><b>{c.nonVotant + c.absent + vue.absents}</b> non votants</span>
                 </div>
+
+                {complet && vue.absents > 0 && (
+                  <p style={{ color: T.dust, fontSize: 11.5, marginTop: 12, lineHeight: 1.5 }}>
+                    {vue.absents} sièges gris représentent les députés absents. L'Assemblée
+                    publie leur nombre par groupe, jamais leur identité&nbsp;: ces sièges sont
+                    donc exacts en quantité, mais anonymes.
+                  </p>
+                )}
               </>
             )}
           </section>
 
           {/* ---- groupes ---- */}
-          <aside>
-            <div className="eyebrow" style={{ padding: "0 9px 10px" }}>Groupes · gauche → droite</div>
+          <aside aria-labelledby="titre-groupes">
+            <h2 className="eyebrow" id="titre-groupes" style={{ padding: "0 9px 10px" }}>
+              Groupes · gauche → droite
+            </h2>
             <div className="grp">
               {vue?.groupes.map((g) => {
                 const on = actif === g.id;
@@ -320,7 +488,7 @@ export default function App() {
                       <span style={{ flexGrow: n("pour") || 0.001, background: T.pour }} />
                       <span style={{ flexGrow: n("contre") || 0.001, background: T.contre }} />
                       <span style={{ flexGrow: n("abstention") || 0.001, background: T.abst }} />
-                      <span style={{ flexGrow: (n("nonVotant") + n("absent")) || 0.001, background: T.absent }} />
+                      <span style={{ flexGrow: (n("nonVotant") + n("absent") + g.absents) || 0.001, background: T.absent }} />
                     </span>
                   </button>
                 );
@@ -338,8 +506,10 @@ export default function App() {
 
         {/* ---- analyse nominative ---- */}
         {vue && (
-          <section className="nom">
-            <div className="eyebrow">Analyse du scrutin · position de chaque député</div>
+          <section className="nom" id="analyse" tabIndex={-1} aria-labelledby="titre-analyse">
+            <h2 className="eyebrow" id="titre-analyse">
+              Analyse du scrutin · position de chaque député
+            </h2>
 
             {vue.alerte && (
               <p role="alert" style={{ border: `1px solid ${T.brass}`, color: T.brass,
@@ -360,8 +530,8 @@ export default function App() {
 
             {(actif ? vue.groupes.filter((g) => g.id === actif) : vue.groupes).map((g) => {
               const filtre = (l) =>
-                (l ?? []).filter((d) =>
-                  !q.trim() || d.nom.toLowerCase().includes(q.trim().toLowerCase()));
+                (l ?? []).filter((id) =>
+                  !q.trim() || vue.nom(id).toLowerCase().includes(q.trim().toLowerCase()));
               const affiches = COLONNES.reduce((t, [, k]) => t + filtre(g.cases[k]).length, 0);
               if (affiches === 0 && q.trim()) return null;
 
@@ -370,7 +540,10 @@ export default function App() {
                   <div className="grptitre">
                     <span className="p" style={{ background: couleurDe(g.id) }} />
                     <h3>{g.id}</h3>
-                    <span className="ligne mono">{g.sieges} siège{g.sieges > 1 ? "s" : ""}</span>
+                    <span className="ligne mono">
+                      {g.cases.membres} membre{g.cases.membres > 1 ? "s" : ""}
+                      {g.cases.absents > 0 && <> · {g.cases.absents} absent{g.cases.absents > 1 ? "s" : ""}</>}
+                    </span>
                   </div>
                   <div className="cols">
                     {COLONNES.map(([label, k, couleur]) => {
@@ -384,8 +557,15 @@ export default function App() {
                           {l.length === 0 ? (
                             <p className="vide">aucun</p>
                           ) : (
-                            <ul className="liste">
-                              {l.map((d) => <li key={d.id}><span>{d.nom}</span></li>)}
+                            <ul className="liste" tabIndex={l.length > 8 ? 0 : -1}
+                                aria-label={`${label} — groupe ${g.id}`}>
+                              {l.map((id) => (
+                                <li key={id}>
+                                  <button className="lien-depute" onClick={() => setDepute(id)}>
+                                    {vue.nom(id)}
+                                  </button>
+                                </li>
+                              ))}
                             </ul>
                           )}
                         </div>
@@ -403,7 +583,9 @@ export default function App() {
             Source&nbsp;: {scrutin.donnees?.licence ?? index.donnees.licence}.<br />
             Données ingérées le {new Date(index.donnees.genere_le).toLocaleString("fr-FR")}.
           </span>
-          <span className="mono">{vue?.total ?? "—"} sièges · 11 rangs</span>
+          <span className="mono">
+            {vue ? `${vue.total} sièges · ${vue.nommes} nommés` : "—"}
+          </span>
         </footer>
       </div>
     </div>

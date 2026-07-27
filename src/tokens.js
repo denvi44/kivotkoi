@@ -20,7 +20,13 @@ export const T = {
   pour: "#5E9C6B",
   contre: "#C05A4A",
   abst: "#B79B5A",
-  absent: "#4A433C",
+  absent: "#7A7066",
+
+  /* Variantes pour le texte : les jetons ci-dessus sont calibrés pour des
+     aplats et tombent sous 4,5:1 employés comme couleur de texte. */
+  contreTxt: "#C66A5B",
+  absentTxt: "#8F8275",
+  bordureChamp: "#74665C",
 };
 
 export default T;

@@ -19,12 +19,12 @@
  * l'est pas.
  *
  * Usage :
- *   node scripts/ingest.mjs [--legislature 17] [--out ./public/donnees]
+ *   node scripts/ingest.mjs [--legislature 17] [--mois 12] [--out ./public/donnees]
  *                           [--depuis 0] [--cache ./.cache]
  *   node scripts/ingest.mjs --inspecter   # imprime la forme réelle d'un scrutin
  */
 
-import { mkdir, writeFile, readFile, rm } from "node:fs/promises";
+import { mkdir, writeFile, readFile, readdir, rm } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { pathToFileURL } from "node:url";
@@ -33,6 +33,7 @@ import path from "node:path";
 import {
   partitionner, compter, parGroupe, resumerAnomalies, CASES,
 } from "./partition.mjs";
+import { profil, creerAccumulateur } from "./deputes.mjs";
 
 const run = promisify(execFile);
 
@@ -46,6 +47,14 @@ const LEGISLATURE = arg("legislature", "17");
 const SORTIE = path.resolve(arg("out", "./public/donnees"));
 const CACHE = path.resolve(arg("cache", "./.cache"));
 const DEPUIS = Number(arg("depuis", 0));
+
+/* Fenêtre glissante. La législature entière représente 8 400 scrutins et 86 Mo,
+   recommittés à chaque ingestion : trop lourd pour un dépôt git quotidien, et
+   l'index serait chargé à chaque visite. `--mois 0` lève la limite. */
+const MOIS = Number(arg("mois", 12));
+const DEPUIS_DATE = MOIS > 0
+  ? new Date(Date.now() - MOIS * 30.44 * 864e5).toISOString().slice(0, 10)
+  : "0000-00-00";
 
 const RACINE = "https://data.assemblee-nationale.fr/static/openData/repository";
 const JEUX = {
@@ -101,6 +110,38 @@ async function fichiersJson(dossier) {
 
 const lire = async (f) => JSON.parse(await readFile(f, "utf8"));
 
+/**
+ * Charge tous les .json d'un sous-dossier de l'archive.
+ *
+ * L'AN nomme AMO10 « composite », mais l'archive contient en réalité un
+ * fichier par entité : json/acteur/PA1008.json, json/organe/PO845401.json…
+ * Soit ~7 700 fichiers. Lire le premier venu en le prenant pour un index
+ * global — l'erreur de la première version — donnait zéro groupe.
+ */
+async function lireDossier(racine, nom) {
+  const tous = await fichiersJson(racine);
+  const fichiers = tous.filter((f) => f.includes(`/${nom}/`));
+
+  if (fichiers.length === 0) {
+    const dispo = [...new Set(tous.map((f) => path.basename(path.dirname(f))))];
+    throw new Error(
+      `Aucun fichier dans ${nom}/ sous ${racine}. ` +
+      `Sous-dossiers présents : ${dispo.join(", ") || "(aucun)"}.`
+    );
+  }
+
+  /* Lecture par lots : un Promise.all sur les ~7 100 organes ouvre autant de
+     descripteurs d'un coup et déclenche EMFILE (limite à 256 sur macOS par
+     défaut). Le gain de parallélisme au-delà d'une centaine est nul de toute
+     façon, le goulot étant le disque. */
+  const LOT = 64;
+  const out = [];
+  for (let i = 0; i < fichiers.length; i += LOT) {
+    out.push(...await Promise.all(fichiers.slice(i, i + LOT).map(lire)));
+  }
+  return out;
+}
+
 /* ═══════════════════════════════ normalisation ════════════════════════════ */
 
 /**
@@ -132,41 +173,117 @@ export const texte = (v) => (v && typeof v === "object" ? v["#text"] ?? null : v
  * Les votes ne référencent que des identifiants ; sans cette table on
  * n'afficherait que des PO123456.
  */
-export function construireOrganes(racine) {
+export function construireOrganes(fichiers) {
   const table = new Map();
-  const source = racine?.export?.organes?.organe ?? racine?.organes?.organe;
-  for (const o of enTableau(source)) {
+  for (const f of enTableau(fichiers)) {
+    const o = f?.organe ?? f;
     if (o?.codeType !== "GP") continue; // groupe politique
     const uid = texte(o.uid);
     if (!uid) continue;
+    /* Les groupes dissous sont conservés : un scrutin ancien peut encore les
+       référencer, et mieux vaut afficher « UDR » qu'un « PO872880 » nu. */
     table.set(uid, {
-      id: o.libelleAbrev ?? uid,
+      id: o.libelleAbrev ?? o.libelleAbrege ?? uid,
       nom: o.libelle ?? o.libelleAbrev ?? uid,
     });
   }
   if (table.size === 0) {
     throw new Error(
-      "Aucun groupe politique (codeType « GP ») dans le jeu acteurs. " +
-      "La structure de AMO10 a changé — inspecte le fichier décompressé."
+      "Aucun groupe politique (codeType « GP ») parmi les organes lus. " +
+      "La structure de AMO10 a changé — inspecte .cache/acteurs/json/organe/."
     );
   }
   return table;
 }
 
-/** Table PA###### → nom affichable. */
-export function construireActeurs(racine) {
+/**
+ * Référentiel complet PO###### → organe brut, tous types confondus.
+ * `construireOrganes` ne retient que les groupes politiques ; les fiches de
+ * député ont besoin des commissions, délégations et partis.
+ */
+export function construireTousOrganes(fichiers) {
   const table = new Map();
-  const source = racine?.export?.acteurs?.acteur ?? racine?.acteurs?.acteur;
-  for (const a of enTableau(source)) {
+  for (const f of enTableau(fichiers)) {
+    const o = f?.organe ?? f;
+    const uid = texte(o?.uid);
+    if (uid) table.set(uid, o);
+  }
+  return table;
+}
+
+/** Table PA###### → nom affichable. */
+export function construireActeurs(fichiers) {
+  const table = new Map();
+  for (const f of enTableau(fichiers)) {
+    const a = f?.acteur ?? f;
     const uid = texte(a?.uid);
     if (!uid) continue;
     const ec = a?.etatCivil?.ident;
     table.set(uid, [ec?.prenom, ec?.nom].filter(Boolean).join(" ") || uid);
   }
   if (table.size === 0) {
-    throw new Error("Aucun acteur dans AMO10. La structure a changé.");
+    throw new Error(
+      "Aucun acteur lisible dans AMO10 — inspecte .cache/acteurs/json/acteur/."
+    );
   }
   return table;
+}
+
+/**
+ * Table PA###### → PO###### de son groupe politique actuel, tirée des mandats.
+ * Sert uniquement à réparer les références de groupe cassées (voir
+ * `resoudreGroupe`), jamais à réécrire une référence valide.
+ */
+export function construireAppartenances(fichiers) {
+  const table = new Map();
+  for (const f of enTableau(fichiers)) {
+    const a = f?.acteur ?? f;
+    const uid = texte(a?.uid);
+    if (!uid) continue;
+    for (const m of enTableau(a?.mandats?.mandat)) {
+      if (m?.typeOrgane !== "GP" || m?.dateFin) continue;
+      const ref = texte(m?.organes?.organeRef);
+      if (ref) table.set(uid, ref);
+    }
+  }
+  return table;
+}
+
+/**
+ * Résout le groupe d'une ventilation de vote.
+ *
+ * L'export de l'Assemblée contient deux catégories de références cassées :
+ *  - des groupes dissous, absents du référentiel des mandats *actifs*
+ *    (PO847173, présent dans 3 041 scrutins de la 17e législature) ;
+ *  - des identifiants corrompus — « PO0 » apparaît dans 14 scrutins, toujours
+ *    à la place du RN et jamais en plus, avec le bon effectif.
+ *
+ * Plutôt que de coder ces cas en dur, on interroge les députés eux-mêmes :
+ * si une nette majorité des votants listés appartient aujourd'hui au même
+ * groupe, c'est celui-là. Déduction fondée sur la donnée, et signalée comme
+ * telle plutôt que présentée comme une lecture directe.
+ *
+ * @returns {{id:string, nom:string, deduit:boolean}}
+ */
+export function resoudreGroupe(organeRef, acteurRefs, organes, appartenances) {
+  const direct = organes.get(organeRef);
+  if (direct) return { ...direct, deduit: false };
+
+  const urnes = new Map();
+  for (const ref of acteurRefs) {
+    const po = appartenances.get(ref);
+    if (po) urnes.set(po, (urnes.get(po) ?? 0) + 1);
+  }
+
+  const [gagnant, voix] = [...urnes.entries()].sort((a, b) => b[1] - a[1])[0] ?? [];
+  const meta = gagnant && organes.get(gagnant);
+
+  /* Seuil volontairement haut : sous 70 % d'accord, on préfère afficher un
+     identifiant brut qu'un nom de groupe potentiellement faux. */
+  if (meta && acteurRefs.length > 0 && voix / acteurRefs.length >= 0.7) {
+    return { ...meta, deduit: true };
+  }
+  return { id: organeRef, nom: organeRef, deduit: false };
 }
 
 /**
@@ -181,8 +298,18 @@ const CASES_AN = [
   ["nonVotants", "nonVotant"],
 ];
 
+/** Les libellés de `positionMajoritaire` suivent la même famille de variantes
+    que les positions individuelles. On réutilise le même vocabulaire. */
+const canonPosition = (v) => {
+  const c = String(v ?? "").toLowerCase().trim();
+  return c === "pour" ? "pour"
+    : c === "contre" ? "contre"
+    : c.startsWith("abstention") ? "abstention"
+    : null;
+};
+
 /** Aplatit un scrutin AN en la liste que `partitionner()` sait consommer. */
-export function normaliserScrutin(brut, organes, acteurs) {
+export function normaliserScrutin(brut, organes, acteurs, appartenances = new Map()) {
   const s = brut?.scrutin ?? brut;
   const numero = Number(exiger(s, "numero", "scrutin"));
   const date = String(exiger(s, "dateScrutin", `scrutin ${numero}`)).slice(0, 10);
@@ -201,18 +328,45 @@ export function normaliserScrutin(brut, organes, acteurs) {
   }
 
   const votes = [];
+  const effectifs = {};   // acronyme -> membres annoncés par l'Assemblée
+  const lignes = {};      // acronyme -> position majoritaire publiée par l'AN
+  const deduits = [];     // groupes dont la référence a dû être réparée
+
   for (const g of groupesBruts) {
-    const meta = organes.get(g.organeRef) ?? { id: g.organeRef, nom: g.organeRef };
     const nominatif = g?.vote?.decompteNominatif;
     if (!nominatif) continue; // scrutin publié sans décompte nominatif
 
-    for (const [cleAN, position] of CASES_AN) {
-      for (const v of enTableau(nominatif[cleAN]?.votant ?? nominatif[cleAN])) {
-        const ref = texte(v?.acteurRef);
-        if (!ref) continue;
+    /* Deux passes : d'abord les votants, dont on a besoin pour résoudre le
+       groupe quand sa référence est cassée, ensuite l'enregistrement. */
+    const listes = CASES_AN.map(([cleAN, position]) => [
+      position,
+      enTableau(nominatif[cleAN]?.votant ?? nominatif[cleAN])
+        .map((v) => texte(v?.acteurRef))
+        .filter(Boolean),
+    ]);
+    const tous = listes.flatMap(([, l]) => l);
+
+    const meta = resoudreGroupe(g.organeRef, tous, organes, appartenances);
+    if (meta.deduit) deduits.push(`${g.organeRef}→${meta.id}`);
+
+    for (const [position, l] of listes) {
+      for (const ref of l) {
         votes.push({ id: ref, nom: acteurs.get(ref) ?? ref, groupe: meta.id, position });
       }
     }
+
+    /* `nombreMembresGroupe` est la seule trace des absents : l'Assemblée ne
+       nomme que les députés ayant pris part au vote. On garde donc l'effectif
+       pour pouvoir compter les absents sans prétendre les identifier. */
+    const membres = Number(g?.nombreMembresGroupe);
+    if (Number.isFinite(membres)) {
+      effectifs[meta.id] = (effectifs[meta.id] ?? 0) + membres;
+    }
+
+    /* La ligne du groupe est publiée par l'Assemblée : on ne la déduit pas
+       d'un décompte, on la lit. */
+    const ligne = canonPosition(g?.vote?.positionMajoritaire);
+    if (ligne) lignes[meta.id] = ligne;
   }
 
   if (votes.length === 0) {
@@ -227,6 +381,9 @@ export function normaliserScrutin(brut, organes, acteurs) {
     sort: s?.sort?.libelle ?? s?.sort?.code ?? null,
     typeVote: s?.typeVote?.libelleTypeVote ?? null,
     votes,
+    effectifs,
+    lignes,
+    deduits,
   };
 }
 
@@ -258,13 +415,23 @@ async function main() {
   await mkdir(SORTIE, { recursive: true });
 
   const dossierActeurs = await recupererArchive("acteurs", JEUX.acteurs);
-  const [fichierActeurs] = await fichiersJson(dossierActeurs);
-  if (!fichierActeurs) throw new Error("Archive acteurs vide.");
-  const racineActeurs = await lire(fichierActeurs);
+  const fichiersActeur = await lireDossier(dossierActeurs, "acteur");
+  const fichiersOrgane = await lireDossier(dossierActeurs, "organe");
+  const organes = construireOrganes(fichiersOrgane);
+  const tousOrganes = construireTousOrganes(fichiersOrgane);
+  const acteurs = construireActeurs(fichiersActeur);
+  const appartenances = construireAppartenances(fichiersActeur);
 
-  const organes = construireOrganes(racineActeurs);
-  const acteurs = construireActeurs(racineActeurs);
-  console.log(`${acteurs.size} députés · ${organes.size} groupes politiques`);
+  const profils = new Map();
+  for (const f of fichiersActeur) {
+    const p = profil(f, tousOrganes);
+    if (p) profils.set(p.id, p);
+  }
+  const accumulateur = creerAccumulateur();
+  console.log(
+    `${acteurs.size} députés · ${organes.size} groupes politiques ` +
+    `(${[...organes.values()].map((o) => o.id).sort().join(", ")})`
+  );
 
   const dossierScrutins = await recupererArchive("scrutins", JEUX.scrutins);
   const fichiers = await fichiersJson(dossierScrutins);
@@ -272,16 +439,20 @@ async function main() {
 
   const resume = [];
   const echecs = [];
-  const effectifs = new Map(); // acronyme -> effectif maximal observé
+  const noms = new Map();      // PA###### -> nom, pour deputes.json
+  const deduits = new Map();   // "PO0→RN" -> nombre de scrutins concernés
   const nomsGroupes = new Map();
   for (const o of organes.values()) nomsGroupes.set(o.id, o.nom);
+
+  let ignores = 0;
+  let dernier = null; // composition du scrutin le plus récent
 
   for (const [i, fichier] of fichiers.entries()) {
     let etiquette = path.basename(fichier);
     try {
-      const s = normaliserScrutin(await lire(fichier), organes, acteurs);
+      const s = normaliserScrutin(await lire(fichier), organes, acteurs, appartenances);
       etiquette = s.numero;
-      if (s.numero < DEPUIS) continue;
+      if (s.numero < DEPUIS || s.date < DEPUIS_DATE) { ignores++; continue; }
 
       const { partition, anomalies, total } = partitionner(s.votes);
 
@@ -293,44 +464,79 @@ async function main() {
       );
       if (bloquantes.length) throw new Error(`invariant : ${resumerAnomalies(bloquantes)}`);
 
-      const groupes = parGroupe(partition);
-      for (const [gid, cases] of Object.entries(groupes)) {
-        const n = CASES.reduce((t, c) => t + cases[c].length, 0);
-        effectifs.set(gid, Math.max(effectifs.get(gid) ?? 0, n));
+      for (const d of s.deduits) deduits.set(d, (deduits.get(d) ?? 0) + 1);
+
+      const parG = parGroupe(partition);
+      const compteurs = compter(partition);
+
+      /* Les absents ne sont pas nommés par la source : on ne connaît que leur
+         nombre, par différence entre l'effectif du groupe et les votants. */
+      /* Les fichiers ne portent que des identifiants ; les noms vivent dans un
+         unique deputes.json. Les répéter à chaque scrutin quadruplait le poids
+         de la sortie — 72 Mo au lieu de 18 sur douze mois. */
+      const groupes = {};
+      let membresTotal = 0;
+      for (const [gid, cases] of Object.entries(parG)) {
+        const listes = Object.fromEntries(
+          CASES.map((c) => [c, cases[c].map((d) => {
+            noms.set(d.id, d.nom);
+            return d.id;
+          })])
+        );
+        const votants = CASES.reduce((t, c) => t + listes[c].length, 0);
+        const membres = s.effectifs[gid] ?? votants;
+        membresTotal += membres;
+        groupes[gid] = {
+          ...listes,
+          membres,
+          absents: Math.max(0, membres - votants),
+          ligne: s.lignes[gid] ?? null,
+        };
       }
+
+      accumulateur.ajouter(
+        { numero: s.numero, date: s.date, titre: s.titre, typeVote: s.typeVote },
+        groupes
+      );
+
+      const fichierSortie = {
+        numero: s.numero,
+        date: s.date,
+        titre: s.titre,
+        objet: s.objet,
+        sort: s.sort,
+        typeVote: s.typeVote,
+        total,
+        membres: membresTotal,
+        compteurs: { ...compteurs, absentsNonNommes: Math.max(0, membresTotal - total) },
+        groupes,
+        anomalies: resumerAnomalies(anomalies),
+        groupesDeduits: s.deduits.length ? s.deduits : undefined,
+        source: JEUX.scrutins,
+        ingere_le: new Date().toISOString(),
+        licence: LICENCE,
+      };
 
       await writeFile(
         path.join(SORTIE, `scrutin-${s.numero}.json`),
-        JSON.stringify({
-          numero: s.numero,
-          date: s.date,
-          titre: s.titre,
-          objet: s.objet,
-          sort: s.sort,
-          typeVote: s.typeVote,
-          total,
-          compteurs: compter(partition),
-          groupes: Object.fromEntries(
-            Object.entries(groupes).map(([g, cases]) => [
-              g,
-              Object.fromEntries(
-                CASES.map((c) => [c, cases[c].map((d) => ({ id: d.id, nom: d.nom }))])
-              ),
-            ])
-          ),
-          anomalies: resumerAnomalies(anomalies),
-          source: JEUX.scrutins,
-          ingere_le: new Date().toISOString(),
-          licence: LICENCE,
-        })
+        JSON.stringify(fichierSortie)
       );
 
-      resume.push({
-        numero: s.numero, date: s.date, titre: s.titre,
-        objet: s.objet, sort: s.sort, total, compteurs: compter(partition),
-      });
+      /* Index volontairement maigre : il est chargé à chaque visite, alors que
+         les compteurs détaillés vivent déjà dans le fichier du scrutin, lui
+         chargé à la demande. */
+      resume.push({ numero: s.numero, date: s.date, titre: s.titre, sort: s.sort });
 
-      if (i % 100 === 0) console.log(`  ${i + 1}/${fichiers.length}`);
+      if (!dernier || s.numero > dernier.numero) {
+        dernier = {
+          numero: s.numero,
+          groupes: Object.entries(groupes)
+            .map(([id, g]) => ({ id, nom: nomsGroupes.get(id) ?? id, sieges: g.membres }))
+            .sort((a, b) => b.sieges - a.sieges),
+        };
+      }
+
+      if (i % 500 === 0) console.log(`  ${i + 1}/${fichiers.length}`);
     } catch (e) {
       echecs.push({ scrutin: etiquette, raison: e.message });
       console.error(`  ✗ ${etiquette} : ${e.message}`);
@@ -339,9 +545,32 @@ async function main() {
 
   resume.sort((a, b) => b.numero - a.numero);
 
-  const groupes = [...effectifs.entries()]
-    .map(([id, sieges]) => ({ id, nom: nomsGroupes.get(id) ?? id, sieges }))
-    .sort((a, b) => b.sieges - a.sieges);
+  /* La composition vient du scrutin le plus récent, pas d'un cumul sur la
+     législature : additionner les maxima par groupe recensait 847 sièges pour
+     une assemblée qui en compte 577, les remplacements et changements de
+     groupe étant comptés plusieurs fois. */
+  const groupes = dernier?.groupes ?? [];
+
+  /* Répertoire des noms, chargé une fois pour tous les scrutins. Il contient
+     aussi les députés remplacés en cours de législature, qui ne figurent plus
+     dans le jeu des mandats actifs. */
+  await writeFile(
+    path.join(SORTIE, "deputes.json"),
+    JSON.stringify(Object.fromEntries([...noms].sort((a, b) => a[0].localeCompare(b[0]))))
+  );
+
+  /* Fiches individuelles : un fichier par député, chargé à la demande.
+     Les mettre dans un index global ajouterait plusieurs mégaoctets au
+     chargement initial pour une page que peu de visiteurs ouvriront. */
+  const { fiches, totaux, medianes } = accumulateur.conclure(profils);
+  await mkdir(path.join(SORTIE, "depute"), { recursive: true });
+  for (const [id, fiche] of fiches) {
+    await writeFile(
+      path.join(SORTIE, "depute", `${id}.json`),
+      JSON.stringify({ ...fiche, medianesGroupe: medianes[fiche.groupe] ?? null, totaux })
+    );
+  }
+  console.log(`\n${fiches.size} fiche(s) de député`);
 
   await writeFile(
     path.join(SORTIE, "index.json"),
@@ -349,15 +578,49 @@ async function main() {
       legislature: Number(LEGISLATURE),
       groupes,
       scrutins: resume,
+      depuis: DEPUIS_DATE,
       genere_le: new Date().toISOString(),
       source: JEUX.scrutins,
       licence: LICENCE,
     })
   );
 
+  /* Ménage des fichiers devenus hors périmètre.
+     Sans lui, `public/donnees/` ne fait que grossir : le passage d'une
+     ingestion sur toute la législature à une fenêtre de douze mois laisse
+     3 000 fichiers orphelins, que le site ne référence plus mais que git
+     conserve indéfiniment. La suppression n'intervient qu'après une
+     ingestion réussie — jamais avant, sous peine de vider le site si
+     l'archive de l'Assemblée est indisponible. */
+  const attendus = new Set([
+    "index.json", "deputes.json",
+    ...resume.map((s) => `scrutin-${s.numero}.json`),
+  ]);
+  let supprimes = 0;
+  for (const f of await readdir(SORTIE)) {
+    if (!f.endsWith(".json") || attendus.has(f)) continue;
+    await rm(path.join(SORTIE, f));
+    supprimes++;
+  }
+  const fichesAttendues = new Set([...fiches.keys()].map((id) => `${id}.json`));
+  for (const f of await readdir(path.join(SORTIE, "depute"))) {
+    if (!f.endsWith(".json") || fichesAttendues.has(f)) continue;
+    await rm(path.join(SORTIE, "depute", f));
+    supprimes++;
+  }
+  if (supprimes) console.log(`${supprimes} fichier(s) hors périmètre supprimé(s)`);
+
+  if (deduits.size) {
+    console.log("\nRéférences de groupe réparées par déduction :");
+    for (const [d, n] of [...deduits].sort((a, b) => b[1] - a[1])) {
+      console.log(`  ${d} — ${n} scrutin(s)`);
+    }
+  }
+
   console.log(
-    `\n${resume.length} scrutin(s) publié(s) · ${echecs.length} écarté(s) · ` +
-    `${groupes.reduce((t, g) => t + g.sieges, 0)} sièges recensés`
+    `\n${resume.length} scrutin(s) publié(s) · ${ignores} hors période · ` +
+    `${echecs.length} écarté(s) · ` +
+    `${groupes.reduce((t, g) => t + g.sieges, 0)} sièges au scrutin ${dernier?.numero ?? "—"}`
   );
 
   if (resume.length === 0) {

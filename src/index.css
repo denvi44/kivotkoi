@@ -16,8 +16,36 @@
   --pour: #5E9C6B;
   --contre: #C05A4A;
   --abst: #B79B5A;
-  --absent: #4A433C;
+  /* Gris des sièges d'absents. Éclairci de #4A433C (1,76:1, à peine
+     détachable du fond) à 3,53:1. Il reste plus sourd que toute couleur de
+     groupe : l'absence ne doit pas dominer la lecture de l'hémicycle. */
+  --absent: #7A7066;
+
+  /* Variantes destinées au TEXTE. Les jetons ci-dessus sont calibrés pour des
+     aplats (sièges, barres) ; employés comme couleur de texte ils tombent sous
+     le seuil de 4,5:1 exigé par WCAG 1.4.3. Mesuré sur --slate :
+     --contre 3,91 · --absent 1,75. Les variantes atteignent 4,57. */
+  --contre-txt: #C66A5B;
+  --absent-txt: #8F8275;
+
+  /* Bordure des champs de saisie. --line (1,38:1) est acceptable pour un
+     séparateur décoratif, jamais pour délimiter un composant : WCAG 1.4.11
+     réclame 3:1. */
+  --bordure-champ: #74665C;
 }
+
+/* Contenu réservé aux lecteurs d'écran. `clip-path` plutôt que
+   `display:none` : ce dernier retirerait aussi l'élément de l'arbre
+   d'accessibilité, ce qui est exactement l'inverse du but. */
+.sr-only{position:absolute!important;width:1px;height:1px;padding:0;margin:-1px;
+  overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}
+
+/* Lien d'évitement : premier élément focusable de la page, il permet de sauter
+   le rail — plusieurs milliers de scrutins — pour aller au contenu. */
+.evitement{position:absolute;left:-9999px;top:0;z-index:40;
+  background:var(--bone);color:var(--ink);padding:12px 18px;
+  font-family:'Archivo',sans-serif;font-weight:600;font-size:13px}
+.evitement:focus{left:12px;top:12px;outline:2px solid var(--brass);outline-offset:2px}
 
 .chambre{background:var(--ink);color:var(--bone);min-height:100vh;
   font-family:'Spectral',Georgia,serif;font-weight:300;
@@ -38,16 +66,83 @@
   font-size:13px;letter-spacing:.16em;text-transform:uppercase;
   border:1px solid var(--brass);color:var(--brass);padding:7px 15px;white-space:nowrap}
 
-.grille{display:grid;grid-template-columns:190px minmax(0,1fr) 280px;
+/* 232 px : largeur minimale d'une grille calendaire de sept colonnes lisible. */
+.grille{display:grid;grid-template-columns:232px minmax(0,1fr) 280px;
   gap:clamp(18px,2.4vw,38px);margin-top:26px;align-items:start}
 @media(max-width:1080px){.grille{grid-template-columns:1fr}}
 
-.rail{display:flex;flex-direction:column;gap:2px}
+/* Le rail défile dans son propre cadre plutôt que d'étirer la page : avec
+   plusieurs milliers de scrutins, une liste en flux normal repousse
+   l'hémicycle hors de l'écran dès le premier coup d'œil. */
+.rail{display:flex;flex-direction:column;position:sticky;top:0;
+  max-height:100vh;overflow-y:auto;overscroll-behavior:contain}
+.rail .tete{position:sticky;top:0;z-index:2;background:var(--ink);
+  padding:0 12px 10px;display:flex;flex-direction:column;gap:8px}
+.rail .liste-scrutins{display:flex;flex-direction:column;gap:2px}
+.rail .fin{color:var(--dust);font-size:10.5px;padding:12px;line-height:1.4}
+
+/* ──────────────────────────── calendrier ──────────────────────────── */
+
+.cal{padding:0 12px 4px}
+.cal-tete{display:flex;align-items:center;justify-content:space-between;
+  gap:6px;margin-bottom:10px}
+.cal-mois{font-family:'Archivo',sans-serif;font-stretch:112%;font-weight:600;
+  font-size:12.5px;letter-spacing:.02em}
+.cal-mois .mono{color:var(--dust);font-weight:400}
+.cal-nav{all:unset;cursor:pointer;width:26px;height:26px;text-align:center;
+  line-height:26px;font-size:17px;color:var(--dust);border:1px solid var(--line);
+  transition:.15s;flex-shrink:0}
+.cal-nav:hover:not(:disabled){color:var(--bone);border-color:var(--dust)}
+.cal-nav:focus-visible{outline:2px solid var(--brass);outline-offset:1px}
+.cal-nav:disabled{opacity:.28;cursor:default}
+
+.cal-entetes,.cal-semaine{display:grid;grid-template-columns:repeat(7,1fr);gap:2px}
+.cal-entetes{margin-bottom:4px}
+.cal-jour-nom{font-family:'IBM Plex Mono',monospace;font-size:9.5px;
+  color:var(--dust);text-align:center;padding-bottom:2px}
+.cal-semaine{margin-bottom:2px}
+
+.cal-case{position:relative;aspect-ratio:1;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:2px;
+  font-family:'IBM Plex Mono',monospace;font-size:10.5px;box-sizing:border-box}
+/* Les jours sans scrutin restent lisibles mais en retrait : ils donnent le
+   repère calendaire sans attirer le clic. */
+.cal-case.vide{color:var(--line)}
+.cal-case.vide[data-hors="1"]{color:transparent}
+.cal-case.pleine{all:unset;cursor:pointer;position:relative;aspect-ratio:1;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:2px;font-family:'IBM Plex Mono',monospace;font-size:10.5px;
+  color:var(--bone);border:1px solid transparent;box-sizing:border-box;
+  transition:background .15s,border-color .15s}
+.cal-case.pleine:hover{background:var(--raise);border-color:var(--line)}
+.cal-case.pleine:focus-visible{outline:2px solid var(--brass);outline-offset:1px}
+.cal-case.pleine[data-on="1"]{background:var(--bone);color:var(--ink)}
+.cal-case.pleine[data-hors="1"]{opacity:.42}
+.cal-pastille{width:4px;height:4px;border-radius:50%;background:var(--brass)}
+.cal-case.pleine[data-on="1"] .cal-pastille{background:var(--ink)}
+
+.cal-legende{font-size:10px;color:var(--dust);text-align:center;
+  padding:10px 0 4px;margin:0;border-bottom:1px solid var(--line)}
+
+/* Barre de défilement discrète : elle ne doit pas concurrencer les sièges. */
+.rail{scrollbar-width:thin;scrollbar-color:var(--line) transparent}
+.rail::-webkit-scrollbar{width:8px}
+.rail::-webkit-scrollbar-track{background:transparent}
+.rail::-webkit-scrollbar-thumb{background:var(--line);border-radius:4px}
+.rail::-webkit-scrollbar-thumb:hover{background:var(--dust)}
+
+@media(max-width:1080px){
+  .rail{position:static;max-height:60vh}
+}
+
 .rail button{all:unset;cursor:pointer;padding:11px 12px;border-left:2px solid transparent;
   display:block;transition:background .16s}
 .rail button:hover{background:var(--slate)}
 .rail button:focus-visible{outline:2px solid var(--brass);outline-offset:-2px}
 .rail button[data-on="1"]{border-left-color:var(--brass);background:var(--slate)}
+/* La liste est virtualisée : la ligne doit occuper toute la largeur pour que
+   sa hauteur mesurée corresponde à sa hauteur réelle une fois positionnée. */
+.rail button.scrutin{width:100%;box-sizing:border-box}
 .rail .n{font-size:11px;color:var(--dust)}
 .rail .t{font-size:13.5px;line-height:1.3;margin-top:3px}
 
@@ -55,6 +150,9 @@
 .hemi{width:100%;height:auto;display:block;overflow:visible}
 .siege{transition:fill .5s ease,opacity .5s ease,stroke .5s ease;cursor:crosshair}
 .siege:hover{stroke:var(--bone);stroke-width:2.2}
+/* Siège d'absent : la source en donne le nombre, jamais l'identité.
+   Le curseur le dit — il n'y a pas de nom à révéler au survol. */
+.siege.anonyme{cursor:default}
 @media(prefers-reduced-motion:reduce){.siege{transition:none!important;transition-delay:0ms!important}}
 
 .tally{display:flex;height:26px;margin-top:22px;gap:2px}
@@ -109,10 +207,13 @@
   white-space:nowrap;z-index:5}
 .nom{margin-top:34px;border-top:1px solid var(--line);padding-top:22px}
 .nomtools{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:14px 0 20px}
-.champ{background:var(--slate);border:1px solid var(--line);color:var(--bone);padding:9px 12px;
+/* Bordure à 3:1 : délimiter un champ relève de WCAG 1.4.11, pas du décor. */
+.champ{background:var(--slate);border:1px solid var(--bordure-champ);color:var(--bone);
+  padding:9px 12px;
   font-family:'IBM Plex Mono',monospace;font-size:12px;min-width:230px;flex:1;max-width:340px}
 .champ::placeholder{color:var(--dust)}
 .champ:focus{outline:2px solid var(--brass);outline-offset:-1px}
+.champ.mini{min-width:0;width:100%;max-width:none;padding:7px 9px;font-size:11px}
 .bascule{all:unset;cursor:pointer;border:1px solid var(--line);padding:8px 13px;
   font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--dust);transition:.15s}
 .bascule:focus-visible{outline:2px solid var(--brass);outline-offset:-2px}
@@ -128,8 +229,12 @@
 .colh .k{font-family:'Archivo',sans-serif;font-stretch:112%;font-weight:600;
   font-size:11px;letter-spacing:.13em;text-transform:uppercase}
 .colh .n{font-family:'IBM Plex Mono',monospace;font-size:15px}
+/* Zone défilante : `tabindex="0"` est posé côté JSX pour qu'elle soit
+   parcourable au clavier (WCAG 2.1.1), sans quoi les noms au-delà de 340 px
+   restent hors d'atteinte sans souris. */
 .liste{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:5px;
   max-height:340px;overflow:auto}
+.liste:focus-visible{outline:2px solid var(--brass);outline-offset:2px}
 .liste li{font-size:13.5px;line-height:1.32;display:flex;gap:7px;align-items:baseline}
 .liste li mark{background:var(--brass);color:var(--ink);padding:0 2px}
 .flag{color:var(--brass);font-size:10px;font-family:'IBM Plex Mono',monospace;flex-shrink:0}
@@ -142,3 +247,80 @@
 .bloc{margin-bottom:26px}
 .foot{margin-top:34px;padding-top:16px;border-top:1px solid var(--line);
   font-size:11.5px;color:var(--dust);display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap}
+
+/* ─────────────────────────── fiche de député ─────────────────────────── */
+
+.lien-depute{all:unset;cursor:pointer;border-bottom:1px solid transparent}
+.lien-depute:hover{border-bottom-color:var(--dust)}
+.lien-depute:focus-visible{outline:2px solid var(--brass);outline-offset:2px}
+
+.voile{position:fixed;inset:0;background:rgba(10,8,7,.62);z-index:20;
+  animation:voile-in .18s ease}
+@keyframes voile-in{from{opacity:0}to{opacity:1}}
+
+.fiche{position:fixed;top:0;right:0;bottom:0;width:min(480px,100vw);z-index:21;
+  background:var(--slate);border-left:1px solid var(--line);overflow-y:auto;
+  padding:clamp(20px,3vw,34px);animation:fiche-in .22s cubic-bezier(.2,.7,.3,1)}
+@keyframes fiche-in{from{transform:translateX(24px);opacity:0}to{transform:none;opacity:1}}
+@media(prefers-reduced-motion:reduce){
+  .fiche,.voile{animation:none}
+}
+/* Le panneau reçoit le focus à l'ouverture pour amorcer la navigation clavier.
+   Aucune règle `outline:none` dans ce projet, même ciblée : la suppression du
+   contour est la cause la plus fréquente d'inaccessibilité au clavier, et une
+   exception ouvre la porte aux suivantes. Le contour est ici assumé — il
+   signale au passage où le focus a atterri. */
+.fiche:focus-visible{outline:2px solid var(--brass);outline-offset:-2px}
+.fiche{scrollbar-width:thin;scrollbar-color:var(--line) transparent}
+.fiche::-webkit-scrollbar{width:8px}
+.fiche::-webkit-scrollbar-thumb{background:var(--line);border-radius:4px}
+
+.fermer{all:unset;cursor:pointer;position:absolute;top:14px;right:16px;
+  font-size:24px;line-height:1;color:var(--dust);padding:6px 10px}
+.fermer:hover{color:var(--bone)}
+.fermer:focus-visible{outline:2px solid var(--brass)}
+
+.f-etat{color:var(--dust);font-size:13.5px;line-height:1.5;padding:40px 0}
+
+.f-tete{padding-bottom:18px;margin-bottom:20px;border-bottom:1px solid var(--line)}
+.f-pastille{width:11px;height:11px;border-radius:50%;display:inline-block;margin-bottom:10px}
+.f-tete h2{font-size:26px;margin:0 0 8px;letter-spacing:-.015em;line-height:1.08}
+.f-sous{font-size:11.5px;color:var(--dust)}
+.f-parti{font-size:13.5px;margin-top:8px}
+.f-metier{font-size:12.5px;color:var(--dust);margin-top:3px;font-style:italic}
+
+.f-bloc{margin-bottom:28px}
+.f-bloc>.eyebrow{padding-bottom:14px}
+
+.mesure{margin-bottom:20px}
+.m-tete{display:flex;justify-content:space-between;align-items:baseline;gap:12px}
+.m-titre{font-size:13.5px}
+.m-val{font-size:17px}
+.m-pied{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;
+  font-size:10.5px;color:var(--dust);margin-top:6px}
+.m-note{font-size:11.5px;color:var(--dust);line-height:1.5;margin:8px 0 0}
+
+.jauge{position:relative;height:6px;margin-top:8px;display:block}
+.j-fond{position:absolute;inset:0;background:var(--raise)}
+.j-valeur{position:absolute;top:0;bottom:0;left:0;transition:width .3s ease}
+/* Repère du groupe : un trait, pas une barre — c'est une référence, pas une
+   quantité concurrente. */
+.j-mediane{position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--bone)}
+
+.f-avert{font-size:11.5px;color:var(--brass);line-height:1.5;
+  border-left:2px solid var(--brass);padding:2px 0 2px 11px;margin:16px 0 0}
+
+.f-diverg{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:14px}
+.f-diverg li{border-left:2px solid var(--brass);padding-left:11px}
+.d-meta{font-size:10.5px;color:var(--dust)}
+.d-titre{font-size:12.5px;line-height:1.4;margin-top:4px}
+
+.f-mandats{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:15px}
+.f-mandats li[data-fini="1"]{opacity:.5}
+.m-cat{font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--dust)}
+.m-role{color:var(--brass)}
+.m-org{font-size:13px;line-height:1.38;margin-top:4px}
+.m-dates{font-size:10.5px;color:var(--dust);margin-top:3px}
+
+.f-pied{font-size:10.5px;color:var(--dust);padding-top:16px;
+  border-top:1px solid var(--line)}

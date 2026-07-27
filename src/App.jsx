@@ -210,8 +210,10 @@ export default function App() {
   const filtres = useMemo(() => {
     const t = recherche.trim().toLowerCase();
     if (!t) return liste;
-    return liste.filter(
-      (s) => String(s.numero).includes(t) || s.titre.toLowerCase().includes(t)
+    return liste.filter((s) =>
+      String(s.numero).includes(t) ||
+      (s.texte ?? "").toLowerCase().includes(t) ||
+      (s.objetVote ?? "").toLowerCase().includes(t)
     );
   }, [liste, recherche]);
 
@@ -277,8 +279,19 @@ export default function App() {
               Assemblée nationale · {index.donnees.legislature}<sup>e</sup> législature ·{" "}
               Scrutin public n° {meta.numero}
             </div>
-            <h1 className="disp titre">{meta.titre}</h1>
-            {meta.objet && <div className="objet">{meta.objet}</div>}
+            {/* Le sujet d'abord, l'objet procédural ensuite : lire « amendement
+                n° 160 de Mme Cathala après l'article 2 » avant de savoir de quel
+                texte il s'agit n'apprend rien. */}
+            <h1 className="disp titre">{meta.texte ?? meta.objetVote ?? meta.titre}</h1>
+            {meta.texte && meta.objetVote && (
+              <div className="objet-vote">
+                <span className="ov-label">Vote sur</span> {meta.objetVote}
+                {meta.stade && <span className="ov-stade">{meta.stade}</span>}
+              </div>
+            )}
+            {!meta.texte && meta.stade && (
+              <div className="objet-vote"><span className="ov-stade">{meta.stade}</span></div>
+            )}
           </div>
           <div style={{ textAlign: "right" }}>
             {meta.sort && <div className="verdict">{meta.sort}</div>}
@@ -322,7 +335,8 @@ export default function App() {
                               setVueMois({ annee: d.annee, mois: d.mois });
                             }}>
                       <div className="mono n">n° {s.numero} · {s.date}</div>
-                      <div className="t">{s.titre}</div>
+                      <div className="t">{s.texte ?? s.objetVote}</div>
+                      {s.texte && s.objetVote && <div className="o">{s.objetVote}</div>}
                     </button>
                   )}
                 />
@@ -349,7 +363,8 @@ export default function App() {
                             data-on={s.numero === numero ? "1" : "0"}
                             onClick={() => { setNumero(s.numero); setActif(null); }}>
                       <div className="mono n">n° {s.numero}</div>
-                      <div className="t">{s.titre}</div>
+                      <div className="t">{s.texte ?? s.objetVote}</div>
+                      {s.texte && s.objetVote && <div className="o">{s.objetVote}</div>}
                     </button>
                   ))}
                 </div>

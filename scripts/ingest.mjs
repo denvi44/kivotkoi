@@ -34,6 +34,7 @@ import {
   partitionner, compter, parGroupe, resumerAnomalies, CASES,
 } from "./partition.mjs";
 import { profil, creerAccumulateur } from "./deputes.mjs";
+import { analyser, cleTexte } from "../src/intitule.js";
 
 const run = promisify(execFile);
 
@@ -499,10 +500,19 @@ async function main() {
         groupes
       );
 
+      /* Le titre publié mêle le sujet du texte et l'objet procédural. On les
+         sépare à l'ingestion pour que l'interface puisse afficher « de quoi il
+         s'agit » avant « ce sur quoi on vote ». */
+      const intitule = analyser(s.titre);
+
       const fichierSortie = {
         numero: s.numero,
         date: s.date,
         titre: s.titre,
+        texte: intitule.texte,
+        objetVote: intitule.objet,
+        stade: intitule.stade,
+        dossier: cleTexte(s.titre),
         objet: s.objet,
         sort: s.sort,
         typeVote: s.typeVote,
@@ -525,7 +535,18 @@ async function main() {
       /* Index volontairement maigre : il est chargé à chaque visite, alors que
          les compteurs détaillés vivent déjà dans le fichier du scrutin, lui
          chargé à la demande. */
-      resume.push({ numero: s.numero, date: s.date, titre: s.titre, sort: s.sort });
+      /* L'index ne porte plus le titre brut : `texte` + `objetVote` le
+         recomposent à l'affichage, et c'est cette découpe que l'interface
+         utilise. Éviter le doublon garde l'index sous les deux mégaoctets. */
+      resume.push({
+        numero: s.numero,
+        date: s.date,
+        texte: intitule.texte,
+        objetVote: intitule.objet,
+        stade: intitule.stade,
+        dossier: cleTexte(s.titre),
+        sort: s.sort,
+      });
 
       if (!dernier || s.numero > dernier.numero) {
         dernier = {

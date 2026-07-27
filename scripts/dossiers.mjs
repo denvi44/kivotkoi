@@ -30,14 +30,6 @@
  * mauvaise loi.
  */
 
-/** Préfixes d'identifiant de document, vers le segment d'URL correspondant. */
-const TYPES_TEXTE = {
-  PION: "proposition-loi",
-  PRJL: "projet-loi",
-};
-
-const AN = "https://www.assemblee-nationale.fr";
-
 /** Parcours récursif d'une arborescence d'actes législatifs. */
 function* parcourir(noeud) {
   if (!noeud || typeof noeud !== "object") return;
@@ -136,23 +128,9 @@ export function relierDossiers(fichiersDossier, cleParScrutin, legislature = "17
 /**
  * Adresses officielles d'un dossier.
  *
- * @returns {{dossier:?string, texte:?string, amendements:?string}}
+ * Réexporté depuis `src/liens.js`, qui est la seule définition : l'ingestion
+ * et l'interface doivent produire exactement les mêmes URL. Deux
+ * implémentations parallèles finiraient par diverger sans que rien ne le
+ * signale — c'est ce qui a valu un test de cohérence aux jetons de couleur.
  */
-export function liensDossier(d, legislature = 17) {
-  if (!d) return { dossier: null, texte: null, amendements: null };
-
-  const m = /^([A-Z]+)ANR\d*L(\d+)B(\d+)$/i.exec(String(d.depot ?? ""));
-  const type = m ? TYPES_TEXTE[m[1].toUpperCase()] : null;
-
-  return {
-    dossier: d.chemin ? `${AN}/dyn/${legislature}/dossiers/${d.chemin}` : null,
-    /* Vérifié le 28 juillet 2026 : PIONANR5L17B1326 mène bien à
-       /dyn/17/textes/l17b1326_proposition-loi. Un préfixe inconnu — rapport,
-       avis, étude d'impact — ne produit aucun lien plutôt qu'une adresse
-       plausible mais fausse. */
-    texte: type && m ? `${AN}/dyn/${legislature}/textes/l${m[2]}b${m[3]}_${type}` : null,
-    amendements: d.uid
-      ? `${AN}/dyn/${legislature}/amendements?dossier_legislatif=${d.uid}`
-      : null,
-  };
-}
+export { liensTexte as liensDossier } from "../src/liens.js";

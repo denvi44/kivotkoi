@@ -38,7 +38,7 @@ import { analyser, cleTexte } from "../src/intitule.js";
 import {
   construireHistorique, fusionnerHistoriques, deduireAbsents,
 } from "./absents.mjs";
-import { relierDossiers, liensDossier } from "./dossiers.mjs";
+import { relierDossiers } from "./dossiers.mjs";
 
 const run = promisify(execFile);
 
@@ -623,7 +623,11 @@ async function main() {
   /* Rattachement au dossier législatif. Fait après la boucle : il faut la clé
      de texte de chaque scrutin, produite pendant. En cas d'échec du
      téléchargement, les liens manquent — le site reste correct sans eux. */
-  let liensParCle = new Map();
+  /* Un dictionnaire clé → dossier, et non une copie sur chaque scrutin : les
+     URL se reconstruisent à l'affichage par `liensTexte()`. Écrites en toutes
+     lettres sur les 5 102 scrutins concernés, elles portaient l'index de 1,4 à
+     3,75 Mo pour une centaine d'entrées réellement distinctes. */
+  const dossiersParCle = {};
   try {
     const dossierDL = await recupererArchive("dossiers", JEUX.dossiers);
     const fichiersDL = await lireDossier(dossierDL, "dossierParlementaire");
@@ -632,9 +636,9 @@ async function main() {
       relierDossiers(fichiersDL, cleParScrutin, LEGISLATURE);
 
     for (const [cle, d] of parCle) {
-      liensParCle.set(cle, { ...liensDossier(d, Number(LEGISLATURE)), titre: d.titre });
+      dossiersParCle[cle] = { uid: d.uid, chemin: d.chemin, depot: d.depot, titre: d.titre };
     }
-    const relies = resume.filter((s) => liensParCle.has(s.dossier)).length;
+    const relies = resume.filter((s) => dossiersParCle[s.dossier]).length;
     console.log(
       `\nDossiers législatifs : ${directs} scrutin(s) cité(s) directement, ` +
       `propagés à ${relies}/${resume.length} (${((100 * relies) / resume.length).toFixed(1)} %)` +
@@ -642,13 +646,6 @@ async function main() {
     );
   } catch (e) {
     console.warn(`dossiers législatifs indisponibles (${e.message}) — sans liens`);
-  }
-
-  /* Le lien vit dans l'index, pas dans chaque fichier de scrutin : une même
-     entrée servirait des centaines de fois. */
-  for (const s of resume) {
-    const l = liensParCle.get(s.dossier);
-    if (l) s.liens = l;
   }
 
   /* La composition vient du scrutin le plus récent, pas d'un cumul sur la
@@ -683,6 +680,7 @@ async function main() {
     JSON.stringify({
       legislature: Number(LEGISLATURE),
       groupes,
+      dossiers: dossiersParCle,
       scrutins: resume,
       depuis: DEPUIS_DATE,
       genere_le: new Date().toISOString(),

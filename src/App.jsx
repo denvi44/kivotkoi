@@ -6,7 +6,8 @@ import ListeVirtuelle from "./ListeVirtuelle.jsx";
 import FicheDepute from "./FicheDepute.jsx";
 import Calendrier from "./Calendrier.jsx";
 import { grouper, decouper } from "./dates.js";
-import { lienScrutin } from "./liens.js";
+import { lienScrutin, liensTexte } from "./liens.js";
+import Entete from "./Entete.jsx";
 
 /* ============================================================
    CHAMBRE — visualisation des scrutins publics de l'Assemblée.
@@ -285,6 +286,12 @@ export default function App() {
   const c = scrutin.donnees?.compteurs;
   const exprimes = c ? c.pour + c.contre : 0;
 
+  /* Les adresses se recomposent ici plutôt que d'être stockées : l'index ne
+     porte qu'un dictionnaire d'une centaine de dossiers. */
+  const liens = liensTexte(
+    index.donnees.dossiers?.[meta.dossier], index.donnees.legislature
+  );
+
   return (
     <div className="chambre">
       {depute && <FicheDepute etat={fiche} onFermer={() => setDepute(null)} />}
@@ -293,6 +300,8 @@ export default function App() {
       <a className="evitement" href="#analyse">Aller à l'analyse du scrutin</a>
 
       <div className="wrap">
+        <Entete />
+
         <header className="hdr">
           <div>
             <div className="eyebrow">
@@ -322,16 +331,16 @@ export default function App() {
             {/* Le site dit comment on a voté, jamais ce que dit le texte.
                 Les renvois vers la source évitent d'avoir à le résumer. */}
             <div className="liens-sources">
-              {meta.liens?.texte && (
-                <a className="lien-source" href={meta.liens.texte}
+              {liens.texte && (
+                <a className="lien-source" href={liens.texte}
                    target="_blank" rel="noopener noreferrer">
                   Lire le texte
                   <span className="sr-only"> de loi sur assemblee-nationale.fr, nouvelle fenêtre</span>
                   <span aria-hidden="true"> ↗</span>
                 </a>
               )}
-              {meta.liens?.dossier && (
-                <a className="lien-source" href={meta.liens.dossier}
+              {liens.dossier && (
+                <a className="lien-source" href={liens.dossier}
                    target="_blank" rel="noopener noreferrer">
                   Dossier législatif
                   <span className="sr-only"> sur assemblee-nationale.fr, nouvelle fenêtre</span>

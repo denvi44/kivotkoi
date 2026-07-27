@@ -58,6 +58,34 @@
   font-size:10px;letter-spacing:.19em;text-transform:uppercase;color:var(--dust)}
 
 .wrap{max-width:1440px;margin:0 auto}
+
+/* ─────────────────────────── identité du site ─────────────────────────── */
+
+.site-entete{display:flex;align-items:flex-end;justify-content:space-between;
+  gap:32px;flex-wrap:wrap;padding-bottom:22px;margin-bottom:26px;
+  border-bottom:1px solid var(--line)}
+
+.marque{display:flex;align-items:center;gap:15px;text-decoration:none;color:inherit}
+.marque:focus-visible{outline:2px solid var(--brass);outline-offset:5px}
+/* 76 px : en dessous, les trois rangs se lisent comme une texture plutôt que
+   comme un hémicycle. */
+.logo{width:76px;height:43px;flex-shrink:0;overflow:visible}
+/* Le logo s'anime avec la page plutôt que de rester inerte. */
+.marque:hover .logo circle{transition:opacity .25s ease}
+.marque:hover .logo circle:nth-child(odd){opacity:.62}
+
+.mot{display:flex;flex-direction:column;gap:3px;min-width:0}
+.mot-nom{font-size:27px;letter-spacing:-.02em;line-height:1}
+.mot-sous{font-family:'IBM Plex Mono',monospace;font-size:10px;
+  letter-spacing:.13em;text-transform:uppercase;color:var(--dust)}
+
+.site-baseline{margin:0;max-width:46ch;font-size:12.5px;line-height:1.55;
+  color:var(--dust)}
+
+@media(max-width:760px){
+  .site-entete{align-items:flex-start;gap:18px}
+  .site-baseline{max-width:none}
+}
 .hdr{display:flex;justify-content:space-between;align-items:flex-end;gap:24px;
   padding-bottom:20px;border-bottom:1px solid var(--line);flex-wrap:wrap}
 .titre{font-size:clamp(28px,4.2vw,54px);max-width:20ch;margin:10px 0 0}

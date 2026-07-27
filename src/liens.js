@@ -61,3 +61,39 @@ export function lienHemicycle(chambre, uid) {
   if (chambre === "senat" || !uid) return null;
   return `${AN}/dyn/vos-deputes/hemicycle?scrutin=${encodeURIComponent(uid)}`;
 }
+
+/** Préfixes d'identifiant de document, vers le segment d'URL correspondant. */
+const TYPES_TEXTE = {
+  PION: "proposition-loi",
+  PRJL: "projet-loi",
+};
+
+/**
+ * Adresses d'un dossier législatif, construites à la volée.
+ *
+ * Les URL ne sont pas stockées : elles se déduisent de trois valeurs — le
+ * slug du dossier, l'identifiant du texte déposé, l'uid. Les écrire en toutes
+ * lettres sur chacun des 5 102 scrutins concernés faisait passer l'index de
+ * 1,4 à 3,75 Mo, pour une information répétée une centaine de fois.
+ *
+ * @param {?{uid:string, chemin:?string, depot:?string}} d
+ * @returns {{dossier:?string, texte:?string, amendements:?string}}
+ */
+export function liensTexte(d, legislature = 17) {
+  if (!d) return { dossier: null, texte: null, amendements: null };
+
+  const m = /^([A-Z]+)ANR\d*L(\d+)B(\d+)$/i.exec(String(d.depot ?? ""));
+  const type = m ? TYPES_TEXTE[m[1].toUpperCase()] : null;
+
+  return {
+    dossier: d.chemin ? `${AN}/dyn/${legislature}/dossiers/${d.chemin}` : null,
+    /* Vérifié le 28 juillet 2026 : PIONANR5L17B1326 mène bien à
+       /dyn/17/textes/l17b1326_proposition-loi. Un préfixe inconnu — rapport,
+       avis, étude d'impact — ne produit aucun lien plutôt qu'une adresse
+       plausible menant ailleurs. */
+    texte: type && m ? `${AN}/dyn/${legislature}/textes/l${m[2]}b${m[3]}_${type}` : null,
+    amendements: d.uid
+      ? `${AN}/dyn/${legislature}/amendements?dossier_legislatif=${d.uid}`
+      : null,
+  };
+}

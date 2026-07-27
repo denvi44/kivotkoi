@@ -17,7 +17,11 @@ permissions:
 jobs:
   ingerer:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # L'ingestion télécharge et décompresse quatre archives — scrutins,
+    # députés actifs, historique depuis 1997, dossiers législatifs — puis
+    # valide 8 400 scrutins un par un. Vingt minutes suffisaient quand il n'y
+    # en avait que deux.
+    timeout-minutes: 45
 
     steps:
       - uses: actions/checkout@v4
@@ -28,6 +32,24 @@ jobs:
         with:
           node-version: 22
           cache: npm
+
+      # Avant `npm ci`, qui refuse de tourner si package.json et
+      # package-lock.json ne s'accordent pas. Un simple renommage du paquet
+      # suffit à les désynchroniser, et le message brut de npm n'en dit rien.
+      - name: Cohérence du lockfile
+        run: |
+          node -e '
+            const p = require("./package.json");
+            const l = require("./package-lock.json");
+            const racine = l.packages?.[""]?.name;
+            if (p.name !== l.name || p.name !== racine) {
+              console.error(
+                `package.json déclare « ${p.name} » mais le lockfile « ${l.name} »` +
+                ` (racine : ${racine}). Lance npm install et commite le lockfile.`
+              );
+              process.exit(1);
+            }
+          '
 
       - run: npm ci
 

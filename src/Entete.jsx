@@ -20,11 +20,25 @@ const RANGS = [
   { r: 27, n: 9, decalage: 0.5 },
 ];
 
-/* Position de vote de chaque siège du rang extérieur, dans l'ordre.
-   `null` = siège vide, qui reste gris. */
-const POSITIONS = [
-  "contre", "contre", "abstention", "pour", "pour", "pour", "pour", "absent", "absent",
-];
+/**
+ * Tricolore.
+ *
+ * Le bleu officiel (#000091) tombe à 1,26:1 sur le fond d'encre : ses sièges
+ * seraient invisibles. Éclairci à 3,07:1, seuil de WCAG 1.4.11, teinte
+ * conservée. Le rouge (#E1000F) passe tel quel à 3,77.
+ *
+ * Disposition RADIALE : un rang par couleur, du bleu au centre au rouge en
+ * périphérie. Une répartition en bandes verticales aurait suivi l'ordre du
+ * drapeau, mais placé le bleu du côté de la gauche parlementaire — à rebours
+ * de la convention partisane, sur un site qui range précisément les groupes
+ * de gauche à droite. Le radial n'a pas d'orientation, donc pas d'ambiguïté.
+ */
+const BLEU = "#4141FF";
+const BLANC = "#F4F1EA";
+const ROUGE = "#E1000F";
+
+/** Une couleur par rang, de l'intérieur vers l'extérieur. */
+const COULEURS = [BLEU, BLANC, ROUGE];
 
 function sieges() {
   const out = [];
@@ -36,7 +50,7 @@ function sieges() {
         cle: `${iRang}-${i}`,
         x: 32 + rang.r * Math.cos(theta),
         y: 30 - rang.r * Math.sin(theta),
-        position: iRang === RANGS.length - 1 ? POSITIONS[i] : null,
+        couleur: COULEURS[iRang] ?? BLANC,
       });
     }
   });
@@ -50,18 +64,10 @@ export default function Entete() {
     <header className="site-entete">
       <a className="marque" href="/" aria-label="kivotkoi — accueil">
         <svg className="logo" viewBox="0 0 64 36" role="img"
-             aria-label="Hémicycle stylisé : trois rangs de sièges en arc">
-          {GEOMETRIE.map((s) => {
-            const commun = { key: s.cle, cx: s.x, cy: s.y, r: 2.4 };
-            if (s.position === "contre") {
-              return <circle {...commun} fill="none" stroke="var(--contre)" strokeWidth="1.4" />;
-            }
-            if (s.position === "pour") return <circle {...commun} fill="var(--pour)" />;
-            if (s.position === "abstention") {
-              return <circle {...commun} fill="var(--abst)" opacity="0.45" />;
-            }
-            return <circle {...commun} fill="var(--absent)" />;
-          })}
+             aria-label="Hémicycle stylisé aux couleurs du drapeau français">
+          {GEOMETRIE.map((s) => (
+            <circle key={s.cle} cx={s.x} cy={s.y} r="2.4" fill={s.couleur} />
+          ))}
           {/* La tribune, trait sous l'arc. */}
           <path d="M 24 33.5 L 40 33.5" stroke="var(--line)" strokeWidth="1.6"
                 strokeLinecap="round" />

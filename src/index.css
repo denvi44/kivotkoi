@@ -217,7 +217,11 @@
 
 .tally{display:flex;height:26px;margin-top:22px;gap:2px}
 .tally div{transition:flex-grow .5s ease}
-.tallyleg{display:flex;justify-content:space-between;margin-top:9px;font-size:12px;color:var(--dust)}
+/* Cinq entrées et non quatre depuis que « non votants » et « absents » sont
+   comptés séparément : le retour à la ligne évite qu'elles se chevauchent
+   dans la colonne étroite ou à 200 % de zoom (WCAG 1.4.4). */
+.tallyleg{display:flex;justify-content:space-between;flex-wrap:wrap;gap:4px 14px;
+  margin-top:9px;font-size:12px;color:var(--dust)}
 .tallyleg b{color:var(--bone);font-weight:500}
 
 .toolbar{display:flex;justify-content:space-between;align-items:center;gap:14px;

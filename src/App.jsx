@@ -8,6 +8,7 @@ import Calendrier from "./Calendrier.jsx";
 import { grouper, decouper } from "./dates.js";
 import { lienScrutin, liensTexte } from "./liens.js";
 import Entete from "./Entete.jsx";
+import { entreesLegende } from "./decompte.js";
 
 /* ============================================================
    CHAMBRE — visualisation des scrutins publics de l'Assemblée.
@@ -21,6 +22,17 @@ import Entete from "./Entete.jsx";
    ============================================================ */
 
 const CASES = ["pour", "contre", "abstention", "nonVotant", "absent"];
+
+/* Aplats de la barre de décompte, une entrée par case de la légende. Les deux
+   cases hors vote partagent le gris : l'opacité et le jour de 2 px les
+   séparent, le libellé porte le nombre exact de chacune. */
+const APLAT = {
+  pour: { background: T.pour },
+  contre: { background: T.contre },
+  abstention: { background: T.abst },
+  nonVotant: { background: T.absent },
+  absent: { background: T.absent, opacity: 0.55 },
+};
 
 /* Couleurs de TEXTE, pas les jetons d'aplat : --contre et --absent tombent
    respectivement à 3,91 et 1,75 sur ce fond, sous le seuil de 4,5:1. */
@@ -286,6 +298,13 @@ export default function App() {
   const c = scrutin.donnees?.compteurs;
   const exprimes = c ? c.pour + c.contre : 0;
 
+  /* Une seule source pour la barre, la légende et le résumé vocal. Deux
+     provenances d'absents y sont additionnées, jamais en double :
+     `compteurs.absent` compte la LISTE publiée — vide à l'Assemblée, remplie
+     au Sénat qui publie ses présents — et `vue.absents` le NOMBRE déduit de
+     l'effectif du groupe. */
+  const legende = entreesLegende(c, vue?.absents ?? 0, complet);
+
   /* Les adresses se recomposent ici plutôt que d'être stockées : l'index ne
      porte qu'un dictionnaire d'une centaine de dossiers. */
   const liens = liensTexte(
@@ -491,8 +510,7 @@ export default function App() {
                            onChoisirDepute={setDepute}
                            resume={
                              `Hémicycle de ${vue.total} sièges. ` +
-                             `${c.pour} pour, ${c.contre} contre, ${c.abstention} abstention, ` +
-                             `${c.nonVotant + c.absent + vue.absents} n'ont pas pris part au vote. ` +
+                             legende.map((e) => `${e.n} ${e.mot}`).join(", ") + ". " +
                              `Le détail par député figure dans la section « Analyse du scrutin ».`
                            } />
 
@@ -518,17 +536,20 @@ export default function App() {
                   </div>
                 )}
 
+                {/* La barre et la légende sont construites à partir de la MÊME
+                    liste : elles ne peuvent pas diverger. Le calcul vit dans
+                    src/decompte.js, où un test le vérifie — c'est ici qu'une
+                    somme mal étiquetée avait transformé deux non-votants en
+                    213 sur le scrutin 8434. */}
                 <div className="tally" aria-hidden="true">
-                  <div style={{ flexGrow: c.pour, background: T.pour }} />
-                  <div style={{ flexGrow: c.contre, background: T.contre }} />
-                  <div style={{ flexGrow: c.abstention, background: T.abst }} />
-                  <div style={{ flexGrow: c.nonVotant + c.absent + vue.absents, background: T.absent }} />
+                  {legende.map((e) => (
+                    <div key={e.cle} style={{ flexGrow: e.n, ...APLAT[e.cle] }} />
+                  ))}
                 </div>
                 <div className="tallyleg mono">
-                  <span><b>{c.pour}</b> pour</span>
-                  <span><b>{c.contre}</b> contre</span>
-                  <span><b>{c.abstention}</b> abstention</span>
-                  <span><b>{c.nonVotant + c.absent + vue.absents}</b> non votants</span>
+                  {legende.map((e) => (
+                    <span key={e.cle}><b>{e.n}</b> {e.mot}</span>
+                  ))}
                 </div>
 
                 {complet && vue.absents > 0 && (

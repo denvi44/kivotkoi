@@ -487,6 +487,15 @@ async function main() {
         const votants = CASES.reduce((t, c) => t + listes[c].length, 0);
         const membres = s.effectifs[gid] ?? votants;
         membresTotal += membres;
+
+        /* ATTENTION aux deux champs voisins :
+             `absent`  — LISTE, héritée de CASES. Toujours vide pour
+                         l'Assemblée : ses fichiers ne recensent que les
+                         pours, contres, abstentions et non-votants.
+             `absents` — NOMBRE, déduit de l'effectif du groupe moins les
+                         votants nommés. C'est la seule trace des absents.
+           Les confondre à l'affichage donnait une colonne « aucun » sous un
+           en-tête annonçant « 32 absents ». */
         groupes[gid] = {
           ...listes,
           membres,

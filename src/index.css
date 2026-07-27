@@ -81,6 +81,14 @@
   font-size:13px;letter-spacing:.16em;text-transform:uppercase;
   border:1px solid var(--brass);color:var(--brass);padding:7px 15px;white-space:nowrap}
 
+/* Renvoi vers la source officielle. Discret : c'est une porte de sortie, pas
+   un appel à l'action. */
+.lien-source{display:inline-block;margin-top:12px;font-size:12px;
+  color:var(--dust);text-decoration:none;border-bottom:1px solid var(--line);
+  padding-bottom:2px;transition:color .15s,border-color .15s}
+.lien-source:hover{color:var(--bone);border-bottom-color:var(--dust)}
+.lien-source:focus-visible{outline:2px solid var(--brass);outline-offset:3px}
+
 /* 232 px : largeur minimale d'une grille calendaire de sept colonnes lisible. */
 .grille{display:grid;grid-template-columns:232px minmax(0,1fr) 280px;
   gap:clamp(18px,2.4vw,38px);margin-top:26px;align-items:start}

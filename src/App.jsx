@@ -6,6 +6,7 @@ import ListeVirtuelle from "./ListeVirtuelle.jsx";
 import FicheDepute from "./FicheDepute.jsx";
 import Calendrier from "./Calendrier.jsx";
 import { grouper, decouper } from "./dates.js";
+import { lienScrutin } from "./liens.js";
 
 /* ============================================================
    CHAMBRE — visualisation des scrutins publics de l'Assemblée.
@@ -299,6 +300,15 @@ export default function App() {
               {meta.date}
               {exprimes > 0 && <> · majorité absolue&nbsp;: {Math.floor(exprimes / 2) + 1}</>}
             </div>
+            {/* Le site dit comment on a voté, jamais ce que dit le texte.
+                Le renvoi vers la source évite d'avoir à le résumer. */}
+            <a className="lien-source"
+               href={lienScrutin("an", meta.numero, index.donnees.legislature)}
+               target="_blank" rel="noopener noreferrer">
+              Le texte et le dossier législatif
+              <span className="sr-only"> — sur assemblee-nationale.fr, nouvelle fenêtre</span>
+              <span aria-hidden="true"> ↗</span>
+            </a>
           </div>
         </header>
 
@@ -563,6 +573,28 @@ export default function App() {
                   <div className="cols">
                     {COLONNES.map(([label, k, couleur]) => {
                       const l = filtre(g.cases[k]);
+
+                      /* Les absents ne sont pas une liste vide : ce sont des
+                         députés bien réels que l'Assemblée dénombre sans les
+                         nommer. Afficher « aucun » sous un en-tête annonçant
+                         « 32 absents » se contredisait. */
+                      if (k === "absent") {
+                        const n = g.cases.absents ?? 0;
+                        return (
+                          <div className="col" key={k}>
+                            <div className="colh">
+                              <span className="k" style={{ color: couleur }}>{label}</span>
+                              <span className="n">{n}</span>
+                            </div>
+                            <p className="vide">
+                              {n === 0
+                                ? "aucun"
+                                : "non nommés par l'Assemblée, qui n'en publie que le nombre"}
+                            </p>
+                          </div>
+                        );
+                      }
+
                       return (
                         <div className="col" key={k}>
                           <div className="colh">

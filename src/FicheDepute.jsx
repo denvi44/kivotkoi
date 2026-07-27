@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from "react";
 import { T } from "./tokens.js";
 import { couleurDe } from "./groupes.js";
+import { lienParlementaire } from "./liens.js";
 
 /**
  * FicheDepute — panneau latéral, ouvert au clic sur un siège ou un nom.
@@ -218,7 +219,16 @@ export default function FicheDepute({ etat, onFermer }) {
             )}
 
             <footer className="f-pied mono">
-              Période couverte&nbsp;: {d.periode?.premier ?? "—"} → {d.periode?.dernier ?? "—"}
+              {lienParlementaire("an", d.id) && (
+                <a className="lien-source" style={{ marginBottom: 10 }}
+                   href={lienParlementaire("an", d.id)}
+                   target="_blank" rel="noopener noreferrer">
+                  Fiche officielle
+                  <span className="sr-only"> de {d.nom} sur assemblee-nationale.fr, nouvelle fenêtre</span>
+                  <span aria-hidden="true"> ↗</span>
+                </a>
+              )}
+              <div>Période couverte&nbsp;: {d.periode?.premier ?? "—"} → {d.periode?.dernier ?? "—"}</div>
             </footer>
           </>
         )}

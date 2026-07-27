@@ -46,16 +46,63 @@ const PREFIXES = "(?:du |de la |de l'|au |à la |à l'|aux )?";
 
 const MOTIF = new RegExp(
   `\\b${PREFIXES}(${DESIGNATIONS.map((d) => d.replace(/ /g, "\\s+")).join("|")})\\b`,
-  "i"
+  "gi"
 );
+
+/**
+ * Profondeur de parenthèses à chaque position.
+ *
+ * Certains titres citent le texte entre parenthèses plutôt qu'en complément
+ * direct : « la proposition du Gouvernement de prolonger la séance en cours au
+ * delà de minuit (projet de loi d'urgence pour la protection…) ». Couper à
+ * l'intérieur laissait un « ( » orphelin d'un côté et un « ) » de l'autre.
+ * On préfère donc une occurrence hors parenthèses quand il en existe une.
+ */
+function profondeurs(s) {
+  const d = new Int8Array(s.length);
+  let n = 0;
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === "(") n++;
+    d[i] = n;
+    if (s[i] === ")") n = Math.max(0, n - 1);
+  }
+  return d;
+}
 
 /* Mentions d'étape, toujours entre parenthèses en fin de titre. */
 const STADES = /\((première lecture|deuxième lecture|nouvelle lecture|lecture définitive|seconde délibération|texte de la commission mixte paritaire|examen prioritaire|lecture unique)\)/gi;
 
-const nettoyer = (s) =>
-  s.replace(/\s+/g, " ")
-   .replace(/^[\s,;:—–-]+|[\s,;:.—–-]+$/g, "")
-   .trim();
+const rogner = (s) => s.replace(/^[\s,;:—–-]+/, "").replace(/[\s,;:.—–-]+$/, "");
+
+/**
+ * Espaces normalisés, ponctuation de bord retirée, et surtout parenthèses
+ * ré-équilibrées.
+ *
+ * Le découpage coupe parfois au milieu d'une incise — « …au delà de minuit
+ * (projet de loi d'urgence…) » — laissant une parenthèse ouvrante d'un côté et
+ * une fermante de l'autre. On les retire une fois la ponctuation de fin ôtée,
+ * sans quoi le point final masquait la parenthèse à la recherche.
+ */
+function nettoyer(s) {
+  let t = rogner(String(s ?? "").replace(/\s+/g, " "));
+
+  /* L'orpheline est toujours en bord de chaîne : le « ( » finit l'objet, le
+     « ) » finit le texte. On la retire caractère par caractère plutôt que par
+     tranche — supprimer tout ce qui précède un « ) » vidait le texte entier.
+     Une incise correctement fermée, comme « (rect.) », reste intacte. */
+  const desequilibre = (x) =>
+    (x.match(/\(/g) ?? []).length - (x.match(/\)/g) ?? []).length;
+
+  for (let i = 0; i < 4 && desequilibre(t) !== 0; i++) {
+    const ecart = desequilibre(t);
+    if (ecart > 0 && t.endsWith("(")) t = rogner(t.slice(0, -1));
+    else if (ecart < 0 && t.endsWith(")")) t = rogner(t.slice(0, -1));
+    else if (ecart < 0 && t.startsWith(")")) t = rogner(t.slice(1));
+    else break;   // déséquilibre au milieu : on n'y touche pas
+  }
+
+  return t.trim();
+}
 
 /** Majuscule initiale, sans toucher au reste (les sigles doivent survivre). */
 const capitaliser = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s);
@@ -83,11 +130,15 @@ export function analyser(titre) {
   const stades = [...brut.matchAll(STADES)].map((m) => m[1].toLowerCase());
   const sansStade = brut.replace(STADES, " ");
 
-  const m = MOTIF.exec(sansStade);
-  if (!m) {
+  MOTIF.lastIndex = 0;
+  const occurrences = [...sansStade.matchAll(MOTIF)];
+  if (occurrences.length === 0) {
     /* Motions de censure, demandes de suspension : aucun texte en jeu. */
     return { texte: null, objet: formaterObjet(sansStade), stade: stades[0] ?? null, brut };
   }
+
+  const niveaux = profondeurs(sansStade);
+  const m = occurrences.find((o) => niveaux[o.index] === 0) ?? occurrences[0];
 
   const avant = sansStade.slice(0, m.index);
   const texte = sansStade.slice(m.index + m[0].length - m[1].length);
